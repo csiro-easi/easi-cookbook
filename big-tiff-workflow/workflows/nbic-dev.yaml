@@ -1,0 +1,872 @@
+# Usage:
+# argo -n easihub submit nbic-dev.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  namespace: easihub
+  generateName: nbic-
+
+spec:
+  entrypoint: nbic-start
+  onExit: exit-handler
+  serviceAccountName: argo-nbic
+  parallelism: 2 # This will determine how many clusters are created simultaneously
+  #podGC:
+  #  strategy: OnPodSuccess
+
+  volumes:
+  - name: user-secret-easi-odc-v2 # contains the EASI Hub wide administration secrets to access the database as admin
+    secret:
+      secretName: user-secret-easi-odc-v2
+      items:
+        - key: .datacube.conf
+          path: .datacube.conf
+  - name: argo-nbic-service-account
+    secret:
+      secretName: argo-nbic-service-account
+      items:
+        - key: jhub_api_token
+          path: .jhub-api-token
+
+  arguments:
+    parameters:
+    - name: dask_gateway_address
+      value: "http://traefik-dask-gateway.easihub/services/dask-gateway"
+    - name: run_prefix # run working area - all workflow scratch and filenames are rooted here
+      value: "s3://easi-dev-dc-data-projects/nbic/stage"
+    - name: output_prefix # output artifacts are placed here
+      value: "s3://easi-dev-dc-data-projects/nbic/outputs"
+    - name: roi # Region of Interest
+      # value: '{"start_date": "1980-01-01", "end_date": "2020-12-31", "boundary": {"type": "Polygon", "coordinates": [[[-88.471115, 34.995703], . . ., [-88.471115, 34.995703]]]}}'
+      # NB: If using 'aoi_id', it can be a list, e.g. '[ 1,2,3 ]', or a single numerical ID, e.g. '1'. Note that all zones passed as a list will be run as a single unioned geometry of all zones.
+      value: '{ "start_date": "1980-01-01", "end_date": "2021-11-10", "aoi_table": "nbic-aois", "aoi_table_pk": "aoi_id": 12 }'
+      # Mississippi:
+      # value: '{"start_date": "1980-01-01", "end_date": "2020-12-31", "bounding_box": [-91.655009, 30.173943, -88.097888, 34.996052]}'
+    - name: aws_region
+      value: "us-west-2"
+    - name: size
+      value: 61440
+    - name: tiles_per_cluster
+      value: 2 # 3
+    - name: filenames
+      # value: '{ "filename-type": "bbox_or_boundary", "file-names": ["foobat"], "file-suffix": ".h5" }'
+      # value: '{ "filename-type": "aoi", "filename-names": ["foobar", "foobar2", "foobar3"], "filename-suffix": ".foo", "filename-aoi-prefix": "foobar2" }'
+      value: '{ "filename-type": "aoi", "file-names": ["foobar"], "filename-suffix": ".foo", "filename-aoi-prefix": "foobar2" }'
+    - name: dask_image # data-pipeline image to use for Pods
+      value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask:develop.latest"
+    - name: admin-config-secret
+      value: admin-secret-easi-odc-v2
+    - name: package-repo
+      value: "https://woo409@dev.azure.com/woo409/woo409-private/_git/woo409-private"  # private azure
+    - name: package-branch
+      value: "main"
+    - name: package-path
+      value: "/opt/repo"
+    - name: package-secret
+      value: azure-devops-easi-git-ro-creds-make-some  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+  templates:
+  - name: nbic-start
+    steps:
+    - - name: shutdown-all-clusters
+        template: shutdown-all-clusters
+    - - name: tile-ds-generator
+        template: tile-ds-generator
+        arguments:
+          parameters:
+          - name: roi
+            value: "{{workflow.parameters.roi}}"
+          - name: aws_region
+            value: "{{workflow.parameters.aws_region}}"
+          - name: size
+            value: "{{workflow.parameters.size}}"
+          - name: tiles_per_cluster
+            value: "{{workflow.parameters.tiles_per_cluster}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+
+    - - name: tile-process
+        template: tile-process
+        arguments:
+          parameters:
+          - name: roi
+            value: "{{workflow.parameters.roi}}"
+          - name: filenames
+            value: "{{workflow.parameters.filenames}}"
+          - name: dask_gateway_address
+            value: "{{workflow.parameters.dask_gateway_address}}"
+          - name: run_prefix
+            value: "{{workflow.parameters.run_prefix}}"
+          - name: key
+            value: "{{item}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+          artifacts:
+          - name: product_cells
+            from: "{{steps.tile-ds-generator.outputs.artifacts.product_cells}}"
+        withParam: "{{steps.tile-ds-generator.outputs.parameters.keys}}"
+
+    - - name: save-tiff
+        template: save-tiff
+        arguments:
+          parameters:
+          - name: dataset_uris
+            value: "{{steps.tile-process.outputs.parameters.dataset_uri}}"
+          - name: output_prefix
+            value: "{{workflow.parameters.output_prefix}}"
+          - name: filenames
+            value: "{{workflow.parameters.filenames}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+
+##--------------------------------
+  - name: tile-ds-generator
+    inputs:
+      parameters:
+      - name: roi
+      - name: aws_region
+      - name: size                  # Tile Size in metres
+      - name: tiles_per_cluster     # Number of tiles to batch into a cluster for processing
+      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-branch        # The sidecar package repo branch
+      - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
+      - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+    outputs:
+      parameters:
+      - name: keys
+        valueFrom:
+          path: /tmp/keys.json
+      artifacts:
+      - name: product_cells
+        path: /tmp/product_cells.pickle
+
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{inputs.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init0
+        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: true
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{inputs.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      env:
+        - name: AWS_METADATA_SERVICE_TIMEOUT
+          value: '30'
+        - name: AWS_METADATA_SERVICE_NUM_ATTEMPTS
+          value: '5'
+        - name: DATACUBE_CONFIG_PATH
+          value: "/root/.user-secret-easi-odc-v2/.datacube.conf"
+      resources: # limit the resources
+        limits:
+          memory: 2Gi
+          cpu: 2000m
+        requests:
+          memory: 1Gi
+          cpu: 1000m
+      volumeMounts:
+        - name: user-secret-easi-odc-v2
+          mountPath: '/root/.user-secret-easi-odc-v2'
+          readOnly: true
+        - name: git-sync
+          mountPath: "{{inputs.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      workingDir: "{{inputs.parameters.package-path}}"
+      command: [python]
+      source: |
+        import sys
+        import json
+        import logging
+        from pathlib import Path
+
+        package_path = "{{inputs.parameters.package-path}}"
+        package_repo = "{{inputs.parameters.package-repo}}"
+
+        repo = Path(package_path) / package_repo.split('/')[-1]
+        sys.path.insert(1, str(repo))
+
+        from tasks.tile_ds_generator import tile_ds_generator
+
+        logging.basicConfig(level=logging.INFO)
+
+        roi_json='{{inputs.parameters.roi}}'
+        roi = json.loads(roi_json)
+
+        aws_region = '{{inputs.parameters.aws_region}}'
+
+        size = float('{{inputs.parameters.size}}')
+        tiles_per_cluster = int('{{inputs.parameters.tiles_per_cluster}}')
+
+        tile_ds_generator(roi, aws_region, size, tiles_per_cluster)
+
+        logging.info("Completed tile generation.")
+
+##--------------------------------
+  - name: tile-process
+    inputs:
+      parameters:
+      - name: roi
+      - name: filenames
+      - name: key
+      - name: dask_gateway_address
+      - name: run_prefix
+      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-branch        # The sidecar package repo branch
+      - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
+      - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+      artifacts:
+      - name: product_cells
+        path: /tmp/product_cells.pickle
+    outputs:
+      parameters:
+      - name: dataset_uri
+        valueFrom:
+          path: /tmp/dataset_uri.txt
+
+    activeDeadlineSeconds: 3540 # Runtime shouldn't exceed 60 minutes due to AWS auth expiration - this is here to allow for Dask scheduler lockups
+
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{inputs.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init0
+        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: false
+        volumeMounts:
+          - name: git-sync
+            mountPath: "{{inputs.parameters.package-path}}"
+          - name: git-secret
+            mountPath: "/secret/git"
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{inputs.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      env:
+        - name: AWS_METADATA_SERVICE_TIMEOUT
+          value: '30'
+        - name: AWS_METADATA_SERVICE_NUM_ATTEMPTS
+          value: '5'
+        - name: DATACUBE_CONFIG_PATH
+          value: "/root/.user-secret-easi-odc-v2/.datacube.conf"
+      volumeMounts:
+        - name: user-secret-easi-odc-v2
+          mountPath: '/root/.user-secret-easi-odc-v2'
+          readOnly: true
+        - name: argo-nbic-service-account
+          mountPath: '/root'
+        - name: git-sync
+          mountPath: "{{inputs.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      resources: # limit the resources
+        limits:
+          memory: 16Gi
+          cpu: 4000m
+        requests:
+          memory: 12Gi
+          cpu: 2000m
+      command: [python]
+      source: |
+        # TODO Dask Workers used for tile-process need to have the same python environment as the client
+        # TODO Usually this is achieved by using the same Dask image on client (in this case the argo tile-process step)
+        # TODO and the dask-workers.
+        # TODO It is possible to create a specific docker image for nbic extending the easi-dask one and
+        # TODO it may be wise to do so to ensure consistency in the execution environment.
+        # TODO Alternately, it should be possible to have the functions defined here in a python package
+        # TODO and upload those to the dask-workers prior to execution while using the default easi-dask image
+        # TODO you could then import the package here as is done in the other tasks. The side effect
+        # TODO being that should easi-dask change the python environment for execution changes
+        # At the moment this argo step uses the defaul easi-dask image and contains the primary script for
+        # execution. It will be pickled for execution on the workers automatically.
+        # TODO This means the argo template contains some quite detailed python code for nbic and
+        # TODO more difficult to maintain.
+
+        import functools
+        import logging
+        import os
+        import sys
+        from math import floor, ceil
+        import json
+        import pickle
+        from time import sleep
+        from urllib.parse import urlparse
+
+        import boto3
+        from dask.distributed import get_client, secede, rejoin
+        from dask.distributed import Client
+        from dask_gateway import Gateway
+        from dask_gateway.auth import JupyterHubAuth
+        from datacube.utils.aws import configure_s3_access
+        from botocore.credentials import RefreshableCredentials
+
+        from botocore.exceptions import ClientError
+        from datacube.api import GridWorkflow
+        from datacube.model import GridSpec
+        from datacube.utils import geometry, masking
+        from datacube.utils.rio import configure_s3_access
+
+        import zarr
+
+        import numpy as np
+        import xarray as xr
+
+        def load_from_grid(key, product_cells, measurements):
+            ds_for_key = []
+            for pc in product_cells:
+                cell = pc.get(key)
+
+                # TODO Does nbic need buffered tiles?
+                # buffer the tiles for use with process function
+                cell.geobox=cell.geobox.buffered(90,90)
+
+                # All geoboxes for the tiles are the same shape
+                # Use this for the chunk size in dask so each tile spatially is a single chunk
+                # note that the geobox resolution is in y,x order
+                # Note also the chunk size is the buffered tile size, not the original tile size
+                # if this isn't accounted for the task graph blows out with the number of tiny slivers
+                # that occur in the resulting tiny chunks around the edges
+                chunk_dim = cell.geobox.shape
+                chunks = {"time": 10, "x": chunk_dim[1], "y": chunk_dim[0]}
+                # logging.info(f'load_from_grid chunks {chunks}')
+
+                try:
+                  ds_for_key.append(
+                      GridWorkflow.load(
+                          cell,
+                          measurements=measurements,
+                          dask_chunks=chunks,
+                          skip_broken_datasets=True, # Ignore exceptions until re-indexer is running regularly to correct for reprocessed data
+                      )
+                  )
+                  logging.info('load_from_grid: OK')
+                except Exception as e:
+                  logging.info(f'load_from_grid: Exception: {e}')
+                  raise
+
+            return ds_for_key
+
+        ## set up mask for screening out Landsat data and normalize Landsat reflection values
+        def MaskNormalize(dataset, SR_bands):
+
+            # Identify pixels that are either "valid", "water" or "snow"
+            cloud_free_mask = masking.make_mask(
+                dataset.pixel_qa, water="land_or_cloud", clear="clear", nodata=False
+            )
+
+            # Set all nodata pixels to `NaN`:
+            # float32 has sufficient precision for original uint16 SR_bands and saves memory
+            SR_masked = masking.mask_invalid_data(
+                dataset[SR_bands].astype("float32", casting="same_kind")
+            )  #  remove the invalid data on Surface reflectance bands prior to masking clouds
+            dataset_masked = SR_masked.where(cloud_free_mask)
+
+            # Normalise reflectance values
+            # From: https://prd-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/atoms/files/LSDS-1619_Landsat8-C2-L2-ScienceProductGuide-v2.pdf
+            normalised_sr = dataset_masked * 0.0000275 + -0.2
+
+            return normalised_sr
+
+        def get_NBR(nir, swir2):
+            return (nir - swir2) / (nir + swir2)
+
+        # Main function for nbic
+        def process_tiles(key, product_cells, filenames):
+            # Set the measurements/bands to load
+            # For this analysis, we'll load the red, green, blue and near-infrared bands
+            SR_bands = ["nir", "swir2"]
+            QA_bands = ["pixel_qa"]
+            measurements = SR_bands + QA_bands
+
+            # This will pad the tiles
+            datasets = load_from_grid(key, product_cells,measurements)
+
+            #### Normalize bands
+            NBR_datasets = []
+            for dataset in datasets:
+              normalised_sr = MaskNormalize(dataset,SR_bands)
+
+              ## Calculate an annual veg index
+              NBR_index =  get_NBR(normalised_sr.nir, normalised_sr.swir2)
+              NBR_datasets.append(NBR_index)
+
+            NBR = xr.concat(NBR_datasets, dim="time").sortby("time")
+            #### Calculte an annual mean for each band
+            yearly_mean_normalised_sr_nbr = NBR.resample(time="1Y").mean()
+
+            # Drop nulls
+            features = yearly_mean_normalised_sr_nbr.fillna(0)
+
+            # rechunk for ML procession - peak memory usage for the ML processions when all
+            # be running is quite high so we chunk smaller so dask can complete it bit by bit
+            features = features.chunk(chunks={'time': -1, 'y': 256, 'x': 256})
+
+            # process will rechunk the data
+            results = list()
+            for filename_name in filenames:
+                r = do_stuff(features,filename_name)
+                r = r.to_dataset(name=f"{filename_name}")
+                results.append(r)
+
+            result = xr.merge(results)
+
+            # Trim off the buffer and rechunk to align the chunks with the new boundaries (trim will only impact the outer chunks)
+            # This will ensure Zarr is happy as well as it requires uniform chunks for all but the last one.
+            result_rechunked = result.isel(x=slice(3,-3),y=slice(3,-3)).chunk(chunks={'y': 1024, 'x': 1024})
+
+            return result_rechunked
+
+        ## Dask Cluster related functions
+        # Will obtain or create cluster_index cluster from the gateway - be sure to set the cluster_index of you are using more than one from the gateway_list_clusters cell above
+        def get_cluster_client(min_workers, max_workers, gateway: Gateway, cluster_name=None, new=True, options=None, adapt=False):
+            if new:
+                if cluster_name!=None:
+                    c = gateway.connect(cluster_name)
+                    c.shutdown()
+
+                cluster_name = gateway.submit(cluster_options=options) # This is non-blocking, all clusters will be requested simultaneously
+
+            cluster = gateway.connect(
+                cluster_name
+            )  # This will block until the cluster enters the running state
+            if adapt:
+                logging.info("Apapt")
+                cluster.adapt(minimum=min_workers, maximum=max_workers)
+            else:
+                logging.info("scale")
+                cluster.scale(min_workers)
+
+            client = cluster.get_client(set_as_default=True)
+
+            return client, cluster
+
+        def configure_client(client, filenames, run_prefix):
+            configure_s3_access(aws_unsigned=False, requester_pays=True, client=client)
+
+            def _worker_object_upload(dask_worker, bucket, prefix, filenames):
+                worker_path = [s for s in sys.path if "/dask-worker-space/" in s][
+                    0
+                ]  # should only be one that matches
+
+                s3 = boto3.client("s3")
+                for filename in filenames:
+                    full_path = os.path.join(worker_path, filename)
+                    logging.info(f"download file: {bucket}, {prefix}/filenames/{filename}, {filenames}")
+                    r = s3.download_file(bucket, f'{prefix}/filenames/{filename}', full_path)
+                    logging.info(f"r")
+
+            components = urlparse(run_prefix)
+            bucket = components.netloc
+            prefix = components.path[1:] # strip leading /
+
+            logging.info(f"Register worker upload callback: {bucket}, {prefix}, {filenames}")
+
+            client.register_worker_callbacks(
+                setup=functools.partial(
+                    _worker_object_upload,
+                    bucket=bucket,
+                    prefix=f"{prefix}",
+                    filenames=filenames,
+                )
+            )
+
+        def compute_result(result,priority):
+            client = get_client()
+
+            futures = client.compute(result, priority=priority, retries=3)
+            secede()
+            r = client.gather(futures)
+            rejoin()
+            client.close()
+            return r
+
+        def tile_process(address, api_token, dask_image, run_prefix, keys, product_cells, filenames, workflow_name, pod_name):
+            # Start the Cluster - potentially takes a few minutes so begin early and get on with
+            # other tasks locally before blocking and waiting for workers
+            auth = JupyterHubAuth(api_token=api_token)
+            gateway = Gateway(address=address, auth=auth)
+
+            # Obtain AWS credentials from the serviceAccount assigned to this pod
+            # Refresh if necessary and obtain the frozen version for use in the Dask Workers
+            credentials = configure_s3_access(aws_unsigned=False,requester_pays=True)
+
+            if credentials and isinstance(credentials, RefreshableCredentials):
+                if credentials.refresh_needed():
+                    credentials = configure_s3_access(aws_unsigned=False,requester_pays=True)
+            if isinstance(credentials, RefreshableCredentials):
+                logging.info("%s seconds remaining", str(credentials._seconds_remaining()))
+
+            creds = credentials.get_frozen_credentials()
+
+            options = gateway.cluster_options()
+            ### Best performance for smaller Tile sizes
+            adapt = False # DO NOT USE ADAPT - known issues with dask gateway controller and key transfers and almost negligible change in nbic workflow efficiency
+            max_workers= 16
+            options.node_selection = "worker8x"
+            options.worker_cores = 8
+            options.worker_memory = 30
+            options.image = dask_image
+            options.aws_session_token = creds.token
+            options.aws_access_key_id = creds.access_key
+            options.aws_secret_access_key = creds.secret_key
+
+            logging.info("Creating cluster...")
+
+            if not adapt:
+                min_workers = max_workers
+            # start the cluster with 0 workers - we need the cluster running to be able to prepare the task graph but this is all done locally to the argo Pod
+            # Once that is done we scale up the cluster to the required workers
+            client, cluster = get_cluster_client(gateway=gateway, min_workers=0, max_workers=0, options=options, new=True, adapt=adapt )
+            logging.info("Cluster created")
+
+            configure_client(client, filenames=filenames, run_prefix=run_prefix)
+            logging.info(client.dashboard_link)
+
+            context_id = f'{workflow_name}/{pod_name}'
+
+            storage_prefix = f'{run_prefix}/{context_id}'
+
+            results = list()
+            for key in keys:
+                results.append(process_tiles(key, product_cells=product_cells, filenames=filenames))
+            logging.info(results)
+
+            # TODO Several strategies are in commented here for investigation. They have slightly different submission times and scheduler impacts
+            # TODO Which is most appropriate depends on the overall workload and the stability of some features in Dask (particularly strat 1)
+            logging.info("Submitting to cluster")
+            ### Strat 1: Priority Map - processes the result task graphs in parallel and submits them
+            # priority = list(reversed(range(len(results))))
+            # # Wait for minimum workers
+            # # client.scatter() gets annoyed waiting for workers to come up so wait for min_workers
+            # logging.info("Waiting for workers")
+            # client.wait_for_workers(n_workers=min_workers)
+            # # Dask scheduler is complaining about the size of the result array being passed via scheduler so first send it to cluster
+            # # Then submit jobs
+            # results_future = client.scatter(results)
+            # futures = client.map(compute_result, results_future, priority)
+            # logging.info("Waiting for results...")
+            # results = client.gather(futures)
+
+            ### Strat 2: Compute each result one at a time. Will pause to process each task graph each time.
+            # rslts = list()
+            # for rslt in results:
+            #     logging.info('Processing a tile...')
+            #     a_rslt = rslt.compute(retries=3)
+            #     rslts.append(a_rslt)
+            #     logging.info('Completed a tile')
+
+            # results = rslts
+
+            ### Strat 4: Submit one at a time, optimising one at a time. Will be scheduled as they become ready and executed when the scheduler can receive them.
+            # It can be slow analysing the task graph for all Tiles together as Dask seeks out any repeated work to optimise out. This can take longer
+            # than just reloading that section of data if there is one so in this case is not a useful optimisation.
+            # fifo_timeout will assist in notifying the scheduler that these are different submissions and should be considered independently and done in submission order
+            # this encourages dask to complete work (and reduce cluster memory pressure) though in practice there are a lot of available threads so everything stays busy
+            logging.info("Scaling workers...")
+            cluster.scale(min_workers)
+            client.wait_for_workers(n_workers=min_workers)
+            futures = list()
+            for r in results:
+              logging.info("Processing tile...")
+              futures.append(client.compute(r, fifo_timeout='0ms',retries=3)) # Use client.compute() here so we get a Future back and can wait on it.
+            logging.info("Waiting for results...")
+            results = client.gather(futures)
+
+            logging.info("Results completed.")
+            logging.info(results)
+
+            # Shutdown the cluster
+            client.close()
+            cluster.shutdown()
+            logging.info("Cluster shutdown")
+
+            ### Save the results for this workflow
+            # TODO Minor improvement would be to make this run in parallel as the futures complete
+            for i,r in enumerate(results):
+                out_uri = f'{storage_prefix}/output_{i}'
+                logging.info(out_uri)
+                store = zarr.storage.FSStore(
+                            out_uri, normalize_keys=False
+                        )
+                r.to_zarr(store=store)
+
+            logging.info(f"Results stored for: {storage_prefix}")
+            with open('/tmp/dataset_uri.txt','w') as outfile:
+                outfile.write(storage_prefix)
+
+        #------------------------------------------ Main Script ------------------------------------------#
+        logging.basicConfig(level=logging.INFO)
+        logging.info("Start tile-process...")
+
+        # Resolve the Area-of-Interest ID from the passed 'roi' JSON, exit if not passed or not valid
+        roi_json='{{inputs.parameters.roi}}'
+        roi = json.loads(roi_json)
+
+        aoi_id = None
+        if "aoi_id" in roi and "aoi_table" in roi and "aoi_table_pk" in roi:
+          # The ROI for this run is an Area-of-Interest lookup in a lookup table
+          aoi_id = roi['aoi_id']
+          if not aoi_id or not isinstance(aoi_id, int):
+            sys.exit("Exiting: Region of interest is blank or not a valid integer.")
+
+        # Resolve the filename names to run for the given Area-of-Interest
+        filenames = list()
+        filenames_json = '{{inputs.parameters.filenames}}'
+        filenames = json.loads(filenames_json)
+        if filenames['filename-type'] == "bbox_or_boundary":
+          for filename in filenames['filename-names']:
+            filenames.append(filename + filenames['filename-suffix'])
+        elif filenames['filename-type'] == "aoi":
+          for filename in filenames['filename-names']:
+            filenames.append(filename + filenames['filename-aoi-prefix'] + str(aoi_id) + filenames['filename-suffix'])
+        else:
+          sys.exit("Exiting: 'filenames to process' is not a valid type of 'bbox_or_boundary' or 'aoi'.")
+        logging.info(f"filenames to run: {filenames}")
+
+        with open('/root/.jhub-api-token','r') as f:
+            api_token = f.read()
+
+        address = '{{inputs.parameters.dask_gateway_address}}'
+        dask_image = '{{workflow.parameters.dask_image}}'
+
+        run_prefix = '{{inputs.parameters.run_prefix}}'
+
+        key_json ='{{inputs.parameters.key}}'
+        key_array = json.loads(key_json)
+
+        with open('/tmp/product_cells.pickle','rb') as f:
+            product_cells = pickle.load(f)
+
+        keys = [tuple(k) for k in key_array]
+        logging.info(f"Keys: {[keys]}")
+
+        workflow_name = '{{workflow.name}}'
+        pod_name = '{{pod.name}}'
+        logging.info(f'context_id: {workflow_name}/{pod_name}')
+
+        tile_process(address, api_token, dask_image, run_prefix, keys, product_cells, filenames, workflow_name, pod_name)
+
+        logging.info("Completed tile processing.")
+
+##--------------------------------
+  - name: save-tiff
+    inputs:
+      parameters:
+      - name: dataset_uris
+      - name: output_prefix
+      - name: filenames
+      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-branch        # The sidecar package repo branch
+      - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
+      - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{inputs.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init0
+        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: true
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{inputs.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      env:
+        - name: AWS_METADATA_SERVICE_TIMEOUT
+          value: '30'
+        - name: AWS_METADATA_SERVICE_NUM_ATTEMPTS
+          value: '5'
+      resources: # limit the resources
+        limits:
+          memory: 48Gi
+          cpu: 4000m
+        requests:
+          memory: 24Gi
+          cpu: 1000m
+      volumeMounts:
+        - name: git-sync
+          mountPath: "{{inputs.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      command: [python]
+      source: |
+        import sys
+        import json
+        import logging
+        from pathlib import Path
+
+        package_path = "{{inputs.parameters.package-path}}"
+        package_repo = "{{inputs.parameters.package-repo}}"
+
+        repo = Path(package_path) / package_repo.split('/')[-1]
+        sys.path.insert(1, str(repo))
+
+        from tasks.save_tiff import save_tiff
+
+        output_prefix = '{{inputs.parameters.output_prefix}}'
+        dataset_uris_json = '{{inputs.parameters.dataset_uris}}'
+        dataset_uris = json.loads(dataset_uris_json)
+        filenames_json = '{{inputs.parameters.filenames}}'
+        filenames = json.loads(filenames_json)
+        filename_suffix = filenames['filename-suffix']
+        workflow_name = '{{workflow.name}}'
+
+        logging.basicConfig(level=logging.INFO)
+        logging.info("Saving tiff...")
+        logging.info(dataset_uris)
+
+        save_tiff(output_prefix, dataset_uris, workflow_name, filename_suffix)
+
+        logging.info("Save-tiffs completed")
+
+##--------------------------------
+  # Exit handler templates
+  # After the completion of the entrypoint template, the status of the
+  # workflow is made available in the global variable {{workflow.status}}.
+  # {{workflow.status}} will be one of: Succeeded, Failed, Error
+  - name: exit-handler
+    steps:
+    - - name: shutdown
+        template: shutdown-all-clusters
+      - name: celebrate
+        template: celebrate
+        when: "{{workflow.status}} == Succeeded"
+      - name: cry
+        template: cry
+        when: "{{workflow.status}} != Succeeded"
+
+  - name: shutdown-all-clusters
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{workflow.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init0
+        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: false
+        volumeMounts:
+          - name: git-sync
+            mountPath: "{{workflow.parameters.package-path}}"
+          - name: git-secret
+            mountPath: "/secret/git"
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{workflow.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{workflow.parameters.package-branch}}" "{{workflow.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      volumeMounts:
+        - name: argo-nbic-service-account
+          mountPath: '/root'
+          readOnly: true
+        - name: git-sync
+          mountPath: "{{workflow.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      command: [python]
+      source: |
+        import sys
+        import json
+        import logging
+        from pathlib import Path
+
+        package_path = "{{workflow.parameters.package-path}}"
+        package_repo = "{{workflow.parameters.package-repo}}"
+
+        repo = Path(package_path) / package_repo.split('/')[-1]
+        sys.path.insert(1, str(repo))
+
+        from tasks.nbic_exit_handler import shutdown_all_clusters
+
+        with open('/root/.jhub-api-token','r') as f:
+          api_token = f.read()
+        address = '{{workflow.parameters.dask_gateway_address}}'
+
+        logging.basicConfig(level=logging.INFO)
+        logging.info("onExit Shutdown process")
+
+        shutdown_all_clusters(address,api_token)
+
+##--------------------------------
+# Option exists to send a notification somewhere
+  - name: celebrate
+    container:
+      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      command: [sh, -c]
+      args: ["echo hooray!"]
+
+##--------------------------------
+  - name: cry
+    container:
+      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      command: [sh, -c]
+      args: ["echo boohoo!"]

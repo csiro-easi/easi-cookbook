@@ -8,7 +8,7 @@ The final Big Tiff step can have a different specification to the other argo wor
 ## Processing steps
 
 1. Break region of interest up into tiles
-2. Launch dask cluster
+2. Launch dask clusters
 3. Process Tiles and save to Zarr
 4. Merge result in a big Pod
 
@@ -17,7 +17,7 @@ The final Big Tiff step can have a different specification to the other argo wor
 * Determines what datasets are in the tiles in the region of interest
 * Divide the tiles into batches for each cluster to process
 
-### 2. Launch dask cluster, Perform Predictions
+### 2. Launch dask cluster, Perform Tile Processing
 * `tile_process.py`
 * Parallel stage for all batches
 * Launches X  # of Dask clusters

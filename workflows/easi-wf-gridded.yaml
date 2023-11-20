@@ -1,0 +1,370 @@
+# Usage: argo submit easi-wf-gridded.yaml
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  namespace: easihub
+  generateName: gridded-
+  labels:
+    name: easi-workflows-gridded
+
+spec:
+  serviceAccountName: data-pipelines-default
+  entrypoint: start
+  onExit: exit-handler
+  parallelism: 10 # How many pods can execute simultaneously
+  artifactGC:
+    strategy: OnWorkflowDeletion
+    serviceAccountName: data-pipelines-default
+  volumes:
+  - name: user-secret-easi-odc-v2 # contains the EASI Hub wide administration secrets to access the database as admin
+    secret:
+      secretName: user-secret-easi-odc-v2
+      items:
+        - key: .datacube.conf
+          path: .datacube.conf
+
+  arguments:
+    parameters:
+    - name: product
+      value: "ga_ls8c_ard_3"
+    - name: odc_query
+      # Must include output_crs, resolution, group-by
+      value: '{ "output_crs": "EPSG:3577", "resolution": [-30, 30], "group_by": "solar_day" }'
+    - name: measurements
+      # Measurements must be valid for the selected product
+      value: '["red", "green", "oa_fmask"]'  # json list string.
+    - name: output # output artifacts are placed here
+      value: '{"bucket": "easihub-csiro-dc-data", "prefix": "staging/dev-tai031/geomedian"}'
+    - name: roi # Region of Interest
+      # Example with bbox (Canberra)
+      # value: '{ "time_start": "2020-01-01", "time_end": "2020-01-10", "bounding_box": [149.077952, -35.279154, 149.159365, -35.320858], "crs": "EPSG:4326" }'
+      # Example with inverted datetimes and roi (Australia)
+      # value: '{ "time_start": "2020-01-10", "time_end": "2020-01-01", "aoi_name": "Australia"}'
+      # Example with boundary (Canberra Lake Burleigh-Griffin)
+      value: '{"time_start": "2021-01-01", "time_end": "2021-02-28", "boundary": { "type": "Polygon", "crs": { "type": "name", "properties": { "name": "EPSG:4326" } }, "coordinates": [ [ [149.083843, -35.283927], [149.083843, -35.303905], [149.125131, -35.303905], [149.125131, -35.283927], [149.083843, -35.283927] ] ] } }'
+      # Invalid example with both bbox and aoi
+      # value: '{ "time_start": "2020-01-10", "time_end": "2020-01-01", "bounding_box": [149.077952, -35.279154, 149.159365, -35.320858], "aoi_name": "Australia"}'
+    - name: size                # Tile size in odc_query.output_crs units
+      # value: 61440
+      value: 2100
+    - name: tiles_per_worker
+      value: 2
+    - name: dask_image # data-pipeline image to use for Pods
+      value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask:develop.latest"
+    # IMAGES AND SECRETS
+    - name: wf_image            # Workflow image to use full image name
+      value: "444488357543.dkr.ecr.us-west-2.amazonaws.com/easi-workflows-base:main.latest"
+    # DEPLOYMENT
+    - name: deployment          # EASI deployment name. Used to look up environment defaults
+      value: "easihub-csiro"
+    - name: aws_region          # Overrides that provided by deployment lookup
+      value: ""
+    - name: git_image           # Overrides that provided by deployment lookup - name:tag - will pull from deployment ECR
+      value: ""
+    - name: alpine_image        # Overrides that provided by deployment lookup - name:tag - will pull from deployment ECR
+      value: ""
+    - name: archive-logs-bucket # Overrides that provided by deployment lookup
+      value: ""
+    # ADD A CODE REPOSITORY (if not built in the wf_image)
+    - name: package-repo
+      value: "https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows"  # private azure
+    - name: package-branch
+      value: "feature/gridded"
+    - name: package-path
+      value: "/opt/repo"
+    - name: package-secret
+      value: azure-devops-easi-hub-git-ro-creds  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+  templates:
+  - name: start
+    steps:
+    - - name: environment
+        templateRef:
+          name: aws-environment
+          template: aws-environment
+        arguments:
+          parameters:
+          - name: wf_image
+            value: "{{workflow.parameters.wf_image}}"
+          - name: deployment  # EASI deployment name
+            value: "{{workflow.parameters.deployment}}"
+          - name: aws_region
+            value: "{{workflow.parameters.aws_region}}"
+          - name: git_image
+            value: "{{workflow.parameters.git_image}}"
+          - name: alpine_image
+            value: "{{workflow.parameters.alpine_image}}"
+          - name: archive-logs-bucket
+            value: "{{workflow.parameters.archive-logs-bucket}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+
+    - - name: tile-generator
+        template: tile-generator
+        arguments:
+          parameters:
+          - name: product
+            value: "{{workflow.parameters.product}}"
+          - name: odc_query
+            value: "{{workflow.parameters.odc_query}}"
+          - name: roi
+            value: "{{workflow.parameters.roi}}"
+          - name: size
+            value: "{{workflow.parameters.size}}"
+          - name: tiles_per_worker
+            value: "{{workflow.parameters.tiles_per_worker}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+          - name: aws_region
+            value: "{{steps.environment.outputs.parameters.aws_region}}"
+          - name: wf_image
+            value: "{{steps.environment.outputs.parameters.wf_image}}"
+          - name: git_image
+            value: "{{steps.environment.outputs.parameters.git_image}}"
+
+    - - name: tile-processor
+        template: tile-processor
+        arguments:
+          parameters:
+          - name: measurements
+            value: "{{workflow.parameters.measurements}}"
+          - name: output
+            value: "{{workflow.parameters.output}}"
+          - name: key
+            value: "{{item}}"
+          - name: package-repo
+            value: "{{workflow.parameters.package-repo}}"
+          - name: package-branch
+            value: "{{workflow.parameters.package-branch}}"
+          - name: package-path
+            value: "{{workflow.parameters.package-path}}"
+          - name: package-secret
+            value: "{{workflow.parameters.package-secret}}"
+          artifacts:
+          - name: product_cells
+            from: "{{steps.tile-generator.outputs.artifacts.product_cells}}"
+        withParam: "{{steps.tile-generator.outputs.parameters.keys}}"
+
+##--------------------------------
+  - name: tile-generator
+    inputs:
+      parameters:
+      - name: product
+      - name: odc_query
+      - name: roi
+      - name: aws_region
+      - name: size                  # Tile Size in metres
+      - name: tiles_per_worker      # Number of tiles to send to a worker for processing
+      - name: git_image
+      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-branch        # The sidecar package repo branch
+      - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
+      - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+    outputs:
+      parameters:
+      - name: keys
+        valueFrom:
+          path: /tmp/keys.json
+      artifacts:
+      - name: product_cells
+        path: /tmp/product_cells.pickle
+
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{inputs.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init1
+        image: "{{inputs.parameters.git_image}}"
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: true
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{inputs.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      env:
+        - name: AWS_METADATA_SERVICE_TIMEOUT
+          value: '30'
+        - name: AWS_METADATA_SERVICE_NUM_ATTEMPTS
+          value: '5'
+        - name: DATACUBE_CONFIG_PATH
+          value: "/root/.user-secret-easi-odc-v2/.datacube.conf"
+      resources: # limit the resources
+        limits:
+          memory: 2Gi
+          cpu: 2000m
+        requests:
+          memory: 1Gi
+          cpu: 1000m
+      volumeMounts:
+        - name: user-secret-easi-odc-v2
+          mountPath: '/root/.user-secret-easi-odc-v2'
+          readOnly: true
+        - name: git-sync
+          mountPath: "{{inputs.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      workingDir: "{{inputs.parameters.package-path}}"
+      command: [python]
+      source: |
+        import sys
+        import json
+        import logging
+        from pathlib import Path
+
+        package_path = "{{inputs.parameters.package-path}}"
+        package_repo = "{{inputs.parameters.package-repo}}"
+        repo = Path(package_path) / package_repo.split('/')[-1]
+        sys.path.insert(1, str(repo))
+
+        logging.basicConfig(level=logging.INFO)
+
+        from tasks.gridded.tile_generator import TileGenerator
+
+        generator = TileGenerator({{inputs.parameters}})
+        generator.generate_tiles()
+
+        logging.info("Completed tile generation.")
+
+##--------------------------------
+  - name: tile-processor
+    inputs:
+      parameters:
+      - name: measurements
+      - name: output
+      - name: key
+      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-branch        # The sidecar package repo branch
+      - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
+      - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+      artifacts:
+      - name: product_cells
+        path: /tmp/product_cells.pickle
+
+    activeDeadlineSeconds: 3540 # Runtime shouldn't exceed 60 minutes due to AWS auth expiration - this is here to allow for Dask scheduler lockups
+
+    volumes:
+      - name: git-sync
+        emptyDir: {}
+      - name: git-secret
+        secret:
+          secretName: "{{inputs.parameters.package-secret}}"
+          items:
+            - key: git-credentials
+              path: .git-credentials
+
+    initContainers:
+      - name: init0
+        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        mirrorVolumeMounts: false
+        volumeMounts:
+          - name: git-sync
+            mountPath: "{{inputs.parameters.package-path}}"
+          - name: git-secret
+            mountPath: "/secret/git"
+        command: [/bin/sh, -c]
+        args:
+          - cd "{{inputs.parameters.package-path}}" &&
+            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+            git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
+    script:
+      image: "{{workflow.parameters.dask_image}}"
+      imagePullPolicy: Always
+      env:
+        - name: AWS_METADATA_SERVICE_TIMEOUT
+          value: '30'
+        - name: AWS_METADATA_SERVICE_NUM_ATTEMPTS
+          value: '5'
+        - name: DATACUBE_CONFIG_PATH
+          value: "/root/.user-secret-easi-odc-v2/.datacube.conf"
+      volumeMounts:
+        - name: user-secret-easi-odc-v2
+          mountPath: '/root/.user-secret-easi-odc-v2'
+          readOnly: true
+        - name: git-sync
+          mountPath: "{{inputs.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      resources: # limit the resources
+        limits:
+          memory: 32Gi
+          cpu: 4000m
+        requests:
+          memory: 24Gi
+          cpu: 2000m
+      command: [python]
+      source: |
+        if __name__ == "__main__":
+          import sys
+          import json
+          import logging
+          from pathlib import Path
+
+          package_path = "{{inputs.parameters.package-path}}"
+          package_repo = "{{inputs.parameters.package-repo}}"
+          repo = Path(package_path) / package_repo.split('/')[-1]
+          sys.path.insert(1, str(repo))
+
+          logging.basicConfig(level=logging.DEBUG)
+
+          from tasks.gridded.tile_processor import TileProcessor
+
+          processor = TileProcessor({{inputs.parameters}})
+          processor.process_tile()
+          logging.info("Completed tile processing.")
+
+##--------------------------------
+  # Exit handler templates
+  # After the completion of the entrypoint template, the status of the
+  # workflow is made available in the global variable {{workflow.status}}.
+  # {{workflow.status}} will be one of: Succeeded, Failed, Error
+  - name: exit-handler
+    steps:
+    - - name: celebrate
+        template: celebrate
+        when: "{{workflow.status}} == Succeeded"
+      - name: cry
+        template: cry
+        when: "{{workflow.status}} != Succeeded"
+
+##--------------------------------
+# Option exists to send a notification somewhere
+  - name: celebrate
+    container:
+      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      command: [sh, -c]
+      args: ["echo hooray!"]
+
+##--------------------------------
+  - name: cry
+    container:
+      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      command: [sh, -c]
+      args: ["echo boohoo!"]

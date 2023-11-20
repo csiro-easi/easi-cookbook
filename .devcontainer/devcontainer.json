@@ -1,0 +1,25 @@
+{
+	"name": "easi-cookbook",
+	"dockerComposeFile": ["../docker-compose.yaml", "../docker-compose.db.yaml", "docker-compose.extend.yaml"],
+	"service": "easi-cookbook",
+	"shutdownAction": "stopCompose",
+	"workspaceFolder": "/easi-cookbook",
+	"remoteUser": "vscode",
+"customizations": {
+	"vscode": {
+		"extensions": [
+			"moshfeu.compare-folders",
+			"twxs.cmake",
+			"mhutchie.git-graph",
+			"ephoton.indent-switcher",
+			"oderwat.indent-rainbow",
+			"ms-python.python",
+			"ms-python.vscode-pylance",
+			"Gruntfuggly.todo-tree",
+			"svipas.prettier-plus",
+			"amazonwebservices.aws-toolkit-vscode",
+			"charliermarsh.ruff"
+		]
+	}
+},
+}

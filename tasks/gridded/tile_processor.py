@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 import rioxarray  # noqa: F401
+import dask
 from dask.distributed import Client, LocalCluster
 from datacube.api import GridWorkflow
 from datacube.utils.masking import make_mask, mask_invalid_data

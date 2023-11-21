@@ -142,3 +142,6 @@ utilities/azure-devops-eoda-git-ro-creds/git-credentials
 testme.py
 logs/
 # outputs/
+
+# vscode
+.vscode/

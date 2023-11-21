@@ -64,7 +64,7 @@ class TileProcessor(ArgoTask):
             configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)
 
     def close_client(self) -> None:
-        """Cloe a local dask cluster, if running."""
+        """Close a local dask cluster, if running."""
         if self._client is not None:
             self._client.close()
             self._cluster.close()

@@ -60,11 +60,13 @@ class TileProcessor(ArgoTask):
     def start_client(self) -> None:
         """Start a local dask cluster, if needed."""
         if self._client is None:
-            dask.config.set({'logging.distributed': 'error'})
-            dask.config.set({'logging.distributed.client': 'error'})
-            dask.config.set({'logging.distributed.worker': 'error'})
-            dask.config.set({'logging.distributed.nanny': 'error'})
-            dask.config.set({'logging.distributed.scheduler': 'error'})
+            dask.config.set({'logging.distributed': {
+                'client': 'error',
+                'worker': 'error',
+                'nanny': 'error',
+                'scheduler': 'error'
+            }})
+
             self._cluster = LocalCluster()
             self._client = Client(self._cluster)
             configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)
@@ -245,7 +247,7 @@ class TileProcessor(ArgoTask):
 
         # Process geomedian month by month
         for start in dr:
-            self._logger.debug(f"  - Month starting on {start}")
+            self._logger.info(f"  - Month starting on {start}")
             ds = dataset.sel(time=slice(start, start + self.ONE_MONTH))
             ds = self.mask(ds)
             ds = self.scale(ds)

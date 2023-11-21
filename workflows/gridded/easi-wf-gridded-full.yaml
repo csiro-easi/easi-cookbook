@@ -146,6 +146,10 @@ spec:
       - name: product_cells
         path: /tmp/product_cells.pickle
 
+    activeDeadlineSeconds: 300 
+    retryStrategy:
+      limit: "2"
+
     volumes:
       - name: git-sync
         emptyDir: {}
@@ -232,7 +236,9 @@ spec:
       - name: product_cells
         path: /tmp/product_cells.pickle
 
-    activeDeadlineSeconds: 3540 # Runtime shouldn't exceed 60 minutes due to AWS auth expiration - this is here to allow for Dask scheduler lockups
+    activeDeadlineSeconds: 3540 # Runtime shouldn't exceed 60 minutes - this is here to allow for Dask scheduler lockups or other issues
+    retryStrategy:
+      limit: "2"
 
     volumes:
       - name: git-sync

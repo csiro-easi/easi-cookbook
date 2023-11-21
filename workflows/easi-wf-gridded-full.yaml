@@ -1,21 +1,21 @@
-# Usage: argo submit easi-wf-gridded.yaml
+# Usage: argo submit easi-wf-gridded-full.yaml
 
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  namespace: easihub
   generateName: gridded-
   labels:
     name: easi-workflows-gridded
+    owner: woo409
 
 spec:
-  serviceAccountName: data-pipelines-default
+  serviceAccountName: eoda-team-sa-argo
   entrypoint: start
   onExit: exit-handler
   parallelism: 10 # How many pods can execute simultaneously
   artifactGC:
     strategy: OnWorkflowDeletion
-    serviceAccountName: data-pipelines-default
+    serviceAccountName: eoda-team-sa-argo
   volumes:
   - name: user-secret-easi-odc-v2 # contains the EASI Hub wide administration secrets to access the database as admin
     secret:
@@ -27,85 +27,48 @@ spec:
   arguments:
     parameters:
     - name: product
-      value: "ga_ls8c_ard_3"
+      value: "landsat8_c2l2_sr"
     - name: odc_query
       # Must include output_crs, resolution, group-by
-      value: '{ "output_crs": "EPSG:3577", "resolution": [-30, 30], "group_by": "solar_day" }'
+      value: '{ "output_crs": "epsg:3085", "resolution": [30, 30], "group_by": "solar_day" }'
     - name: measurements
       # Measurements must be valid for the selected product
-      value: '["red", "green", "oa_fmask"]'  # json list string.
+      value: '["red", "green", "blue", "pixel_qa"]'  # json list string.
     - name: output # output artifacts are placed here
-      value: '{"bucket": "easihub-csiro-dc-data", "prefix": "staging/dev-tai031/geomedian"}'
+      value: '{"bucket": "eoda-dev-dc-data-projects", "prefix": "ngsite/argo-training/woo409/median"}'
     - name: roi # Region of Interest
-      # Example with bbox (Canberra)
-      # value: '{ "time_start": "2020-01-01", "time_end": "2020-01-10", "bounding_box": [149.077952, -35.279154, 149.159365, -35.320858], "crs": "EPSG:4326" }'
-      # Example with inverted datetimes and roi (Australia)
-      # value: '{ "time_start": "2020-01-10", "time_end": "2020-01-01", "aoi_name": "Australia"}'
-      # Example with boundary (Canberra Lake Burleigh-Griffin)
-      value: '{"time_start": "2021-01-01", "time_end": "2021-02-28", "boundary": { "type": "Polygon", "crs": { "type": "name", "properties": { "name": "EPSG:4326" } }, "coordinates": [ [ [149.083843, -35.283927], [149.083843, -35.303905], [149.125131, -35.303905], [149.125131, -35.283927], [149.083843, -35.283927] ] ] } }'
-      # Invalid example with both bbox and aoi
-      # value: '{ "time_start": "2020-01-10", "time_end": "2020-01-01", "bounding_box": [149.077952, -35.279154, 149.159365, -35.320858], "aoi_name": "Australia"}'
+      value: '{"time_start": "2022-01-01", "time_end": "2022-02-28", "boundary": { "type": "Polygon", "crs": { "type": "name", "properties": { "name": "EPSG:4326" } }, "coordinates": [ [ [ -90.27790030796821, 34.99172934528377 ], [ -90.27790030796821,33.22184045132981 ],[ -88.08892787385837,33.22184045132981 ], [ -88.08892787385837, 34.99172934528377 ], [ -90.27790030796821, 34.99172934528377 ] ] ] } }'
     - name: size                # Tile size in odc_query.output_crs units
-      # value: 61440
-      value: 2100
+      value: 61440
     - name: tiles_per_worker
       value: 2
     - name: dask_image # data-pipeline image to use for Pods
-      value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask:develop.latest"
+      value: "444488357543.dkr.ecr.us-west-2.amazonaws.com/easi-dask-noml:2023.10.2"
     # IMAGES AND SECRETS
     - name: wf_image            # Workflow image to use full image name
       value: "444488357543.dkr.ecr.us-west-2.amazonaws.com/easi-workflows-base:main.latest"
     # DEPLOYMENT
-    - name: deployment          # EASI deployment name. Used to look up environment defaults
-      value: "easihub-csiro"
     - name: aws_region          # Overrides that provided by deployment lookup
-      value: ""
+      value: "us-west-2"
     - name: git_image           # Overrides that provided by deployment lookup - name:tag - will pull from deployment ECR
-      value: ""
+      # value: "{aws_account}.dkr.ecr.us-west-2.amazonaws.com/alpine/git:latest"
+      value: "123806938241.dkr.ecr.us-west-2.amazonaws.com/alpine/git:latest"
     - name: alpine_image        # Overrides that provided by deployment lookup - name:tag - will pull from deployment ECR
-      value: ""
-    - name: archive-logs-bucket # Overrides that provided by deployment lookup
-      value: ""
+      # value: "{aws_account}.dkr.ecr.us-west-2.amazonaws.com/ecr-public/docker/library/alpine:latest"
+      value: "123806938241.dkr.ecr.us-west-2.amazonaws.com/alpine"
     # ADD A CODE REPOSITORY (if not built in the wf_image)
     - name: package-repo
-      value: "https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows"  # private azure
+      value: "https://github.com/csiro-easi/easi-cookbook"
     - name: package-branch
-      value: "feature/gridded"
+      value: "gridded-workflow"
     - name: package-path
       value: "/opt/repo"
     - name: package-secret
-      value: azure-devops-easi-hub-git-ro-creds  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+      value: ""  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
 
   templates:
   - name: start
     steps:
-    - - name: environment
-        templateRef:
-          name: aws-environment
-          template: aws-environment
-        arguments:
-          parameters:
-          - name: wf_image
-            value: "{{workflow.parameters.wf_image}}"
-          - name: deployment  # EASI deployment name
-            value: "{{workflow.parameters.deployment}}"
-          - name: aws_region
-            value: "{{workflow.parameters.aws_region}}"
-          - name: git_image
-            value: "{{workflow.parameters.git_image}}"
-          - name: alpine_image
-            value: "{{workflow.parameters.alpine_image}}"
-          - name: archive-logs-bucket
-            value: "{{workflow.parameters.archive-logs-bucket}}"
-          - name: package-repo
-            value: "{{workflow.parameters.package-repo}}"
-          - name: package-branch
-            value: "{{workflow.parameters.package-branch}}"
-          - name: package-path
-            value: "{{workflow.parameters.package-path}}"
-          - name: package-secret
-            value: "{{workflow.parameters.package-secret}}"
-
     - - name: tile-generator
         template: tile-generator
         arguments:
@@ -129,11 +92,11 @@ spec:
           - name: package-secret
             value: "{{workflow.parameters.package-secret}}"
           - name: aws_region
-            value: "{{steps.environment.outputs.parameters.aws_region}}"
+            value: "{{workflow.parameters.aws_region}}"
           - name: wf_image
-            value: "{{steps.environment.outputs.parameters.wf_image}}"
+            value: "{{workflow.parameters.wf_image}}"
           - name: git_image
-            value: "{{steps.environment.outputs.parameters.git_image}}"
+            value: "{{workflow.parameters.git_image}}"
 
     - - name: tile-processor
         template: tile-processor
@@ -186,12 +149,12 @@ spec:
     volumes:
       - name: git-sync
         emptyDir: {}
-      - name: git-secret
-        secret:
-          secretName: "{{inputs.parameters.package-secret}}"
-          items:
-            - key: git-credentials
-              path: .git-credentials
+      # - name: git-secret
+      #   secret:
+      #     secretName: "{{inputs.parameters.package-secret}}"
+      #     items:
+      #       - key: git-credentials
+      #         path: .git-credentials
 
     initContainers:
       - name: init1
@@ -201,8 +164,11 @@ spec:
         command: [/bin/sh, -c]
         args:
           - cd "{{inputs.parameters.package-path}}" &&
-            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
             git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+      # - cd "{{inputs.parameters.package-path}}" &&
+      #   git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+      #   git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+
 
     script:
       image: "{{workflow.parameters.dask_image}}"
@@ -227,8 +193,8 @@ spec:
           readOnly: true
         - name: git-sync
           mountPath: "{{inputs.parameters.package-path}}"
-        - name: git-secret
-          mountPath: "/secret/git"
+      # - name: git-secret
+      #   mountPath: "/secret/git"
       workingDir: "{{inputs.parameters.package-path}}"
       command: [python]
       source: |
@@ -271,28 +237,30 @@ spec:
     volumes:
       - name: git-sync
         emptyDir: {}
-      - name: git-secret
-        secret:
-          secretName: "{{inputs.parameters.package-secret}}"
-          items:
-            - key: git-credentials
-              path: .git-credentials
+      # - name: git-secret
+      #   secret:
+      #     secretName: "{{inputs.parameters.package-secret}}"
+      #     items:
+      #       - key: git-credentials
+      #         path: .git-credentials
 
     initContainers:
       - name: init0
-        image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine/git:latest
+        image: "{{workflow.parameters.git_image}}"
         imagePullPolicy: IfNotPresent
         mirrorVolumeMounts: false
         volumeMounts:
           - name: git-sync
             mountPath: "{{inputs.parameters.package-path}}"
-          - name: git-secret
-            mountPath: "/secret/git"
+          # - name: git-secret
+          #   mountPath: "/secret/git"
         command: [/bin/sh, -c]
         args:
           - cd "{{inputs.parameters.package-path}}" &&
-            git config --global credential.helper "store --file /secret/git/.git-credentials" &&
             git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
+          # - cd "{{inputs.parameters.package-path}}" &&
+          #   git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+          #   git clone --depth 1 --branch "{{inputs.parameters.package-branch}}" "{{inputs.parameters.package-repo}}"
 
     script:
       image: "{{workflow.parameters.dask_image}}"
@@ -310,8 +278,8 @@ spec:
           readOnly: true
         - name: git-sync
           mountPath: "{{inputs.parameters.package-path}}"
-        - name: git-secret
-          mountPath: "/secret/git"
+        # - name: git-secret
+        #   mountPath: "/secret/git"
       resources: # limit the resources
         limits:
           memory: 32Gi
@@ -332,7 +300,7 @@ spec:
           repo = Path(package_path) / package_repo.split('/')[-1]
           sys.path.insert(1, str(repo))
 
-          logging.basicConfig(level=logging.DEBUG)
+          logging.basicConfig(level=logging.INFO)
 
           from tasks.gridded.tile_processor import TileProcessor
 
@@ -358,13 +326,13 @@ spec:
 # Option exists to send a notification somewhere
   - name: celebrate
     container:
-      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      image: "{{workflow.parameters.alpine_image}}"
       command: [sh, -c]
       args: ["echo hooray!"]
 
 ##--------------------------------
   - name: cry
     container:
-      image: 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/alpine:latest
+      image: "{{workflow.parameters.alpine_image}}"
       command: [sh, -c]
       args: ["echo boohoo!"]

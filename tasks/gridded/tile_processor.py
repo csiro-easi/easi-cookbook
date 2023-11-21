@@ -17,7 +17,7 @@ from odc.algo import from_float, to_f32, xr_geomedian
 from tasks.argo_task import ArgoTask
 from tasks.gridded.tile_generator import TileGenerator
 from xarray import Dataset
-
+from datacube.utils.rio import configure_s3_access
 
 class TileProcessor(ArgoTask):
     PRODUCT = "landsat8_geomedian_monthly"
@@ -26,7 +26,7 @@ class TileProcessor(ArgoTask):
     PRODUCT_TEMPLATE = "{product}_{yref}{xref}_{year:04}{month:02}"
     """File name template."""
 
-    SCALE = 1 / 10_000
+    SCALE = 0.0000275
     """Scale to apply to GA-stored USGS data to bring it back to [0.0, 1.0]."""
 
     ONE_MONTH = pd.DateOffset(months=1)
@@ -61,6 +61,7 @@ class TileProcessor(ArgoTask):
         if self._client is None:
             self._cluster = LocalCluster()
             self._client = Client(self._cluster)
+            configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)
 
     def close_client(self) -> None:
         """Cloe a local dask cluster, if running."""
@@ -97,14 +98,17 @@ class TileProcessor(ArgoTask):
         """Mask clouds and no data in data based on `oa_fmask` values."""
         # Use datacube masking methods
         # https://docs.dea.ga.gov.au/notebooks/How_to_guides/Masking_data.html
-        cloud_free_mask = (
-            make_mask(ds.oa_fmask, fmask="valid")
-            | make_mask(ds.oa_fmask, fmask="water")
-            | make_mask(ds.oa_fmask, fmask="snow")
+        cloud_free_mask = make_mask(
+            ds.pixel_qa, water="land_or_cloud", clear="clear", nodata=False
         )
-        cloud_free = ds.where(cloud_free_mask)
-        cloud_free = mask_invalid_data(cloud_free)
-        cloud_free = cloud_free.drop_vars(["of_fmask"], errors="ignore")
+
+        # Set all nodata pixels to `NaN`:
+        # float32 has sufficient precision for original uint16 SR_bands and saves memory
+        cloud_free = mask_invalid_data(
+            ds[["red", "green", "blue"]].astype("float32", casting="same_kind")
+        )  #  remove the invalid data on Surface reflectance bands prior to masking clouds
+        cloud_free = cloud_free.where(cloud_free_mask)
+        
         return cloud_free
 
     def scale(self, ds: Dataset) -> Dataset:
@@ -113,7 +117,7 @@ class TileProcessor(ArgoTask):
         GA Landsat data is in the range [0, 10000] and needs scaling to [0.0,
         1.0] to calculate the geomedian.
         """
-        return to_f32(ds, scale=self.SCALE, offset=0)
+        return to_f32(ds, scale=self.SCALE, offset=-0.2)
 
     def calculate_geomedian(self, ds: Dataset) -> Dataset:
         """Calculate the geomedian and cast it to `int16`."""
@@ -239,7 +243,10 @@ class TileProcessor(ArgoTask):
             ds = dataset.sel(time=slice(start, start + self.ONE_MONTH))
             ds = self.mask(ds)
             ds = self.scale(ds)
-            ds = self.calculate_geomedian(ds)
+            # ! For the sake of calculation time we'll naively use median rather than geomedian
+            #  ds = self.calculate_geomedian(ds)
+            ds = ds.median(dim='time')
+            ds = ds.persist()
             self.save(ds=ds, key=key, start=start)
             self._logger.debug("    Done.")
 
@@ -264,30 +271,3 @@ class TileProcessor(ArgoTask):
             f" - output: {self.output}\n"
             "}"
         )
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-
-    # Monkey patch TileGenerator for local dev
-    TileGenerator.FILEPATH_CELLS = "/home/jovyan/git/easi/tmp/product_cells.pickle"
-
-    # Input params for local test
-    input_params = [
-        {
-            "name": "measurements",
-            "value": '["red", "green", "blue", "oa_fmask"]',
-        },
-        {
-            "name": "output",
-            "value": '{"bucket": "easihub-csiro-user-scratch", "prefix": '
-            '"AROAWO7MSC2TWB77JYRIM:csiro-csiro-aad_tai031@csiro.au/geomedian"}',
-        },
-        {
-            "name": "key",
-            "value": "[[24, -65], [25, -65]]",
-        },
-    ]
-    logging.info("Start tile-process...")
-    processor = TileProcessor(input_params)
-    processor.process_tile()

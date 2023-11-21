@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 import rioxarray  # noqa: F401
-import dask
 from dask.distributed import Client, LocalCluster
 from datacube.api import GridWorkflow
 from datacube.utils.masking import make_mask, mask_invalid_data
@@ -60,13 +59,6 @@ class TileProcessor(ArgoTask):
     def start_client(self) -> None:
         """Start a local dask cluster, if needed."""
         if self._client is None:
-            dask.config.set({'logging.distributed': {
-                'client': 'error',
-                'worker': 'error',
-                'nanny': 'error',
-                'scheduler': 'error'
-            }})
-
             self._cluster = LocalCluster()
             self._client = Client(self._cluster)
             configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)
@@ -260,6 +252,10 @@ class TileProcessor(ArgoTask):
 
     def process_tile(self) -> None:
         """Process all tiles associated with the keys for this processor."""
+        for log in ['distributed', 'distributed.nanny','distributed.scheduler','distributed.client']:
+            logger = logging.getLogger(log)
+            logger.setLevel(logging.ERROR)
+
         self._logger.debug("Initialising local dask cluster")
         self.start_client()
 

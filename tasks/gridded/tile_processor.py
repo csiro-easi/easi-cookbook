@@ -61,6 +61,10 @@ class TileProcessor(ArgoTask):
         """Start a local dask cluster, if needed."""
         if self._client is None:
             dask.config.set({'logging.distributed': 'error'})
+            dask.config.set({'logging.distributed.client': 'error'})
+            dask.config.set({'logging.distributed.worker': 'error'})
+            dask.config.set({'logging.distributed.nanny': 'error'})
+            dask.config.set({'logging.distributed.scheduler': 'error'})
             self._cluster = LocalCluster()
             self._client = Client(self._cluster)
             configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)

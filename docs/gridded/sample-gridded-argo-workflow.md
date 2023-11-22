@@ -2,7 +2,7 @@
 
 ## Use-case
 
-The [sample `Argo` gridded workflow](../workflows/easi-wf-gridded.yaml) demonstrates how
+The [sample `Argo` gridded workflow](../workflows/gridded/easi-wf-gridded-full.yaml) demonstrates how
 to run a computationally intensive algorithm such as monthly median calculations on a
 potentially large spatiotemporal data cube. The workflow illustrates how to combine
 `Argo` and a local `Dask` cluster to perform such a task.
@@ -14,7 +14,8 @@ spatial extent into tiles that can be distributed to individual workers running 
 separate `Kubernetes` nodes; and tile processing, during which each worker creates a
 local `Dask` cluster to calculate geomedians on a handful of tiles.
 
-![Full Argo workflow](media/sample-gridded-argo-workflow-01.png)
+![Full Argo workflow](media/gridded-ArgoWorkflow.png)
+
 *Figure 1: Full Argo workflow*
 
 ## Workflow details

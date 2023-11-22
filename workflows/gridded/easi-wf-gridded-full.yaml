@@ -12,7 +12,7 @@ spec:
   serviceAccountName: eoda-team-sa-argo
   entrypoint: start
   onExit: exit-handler
-  parallelism: 10 # How many pods can execute simultaneously
+  parallelism: 4 # How many pods can execute simultaneously
   artifactGC:
     strategy: OnWorkflowDeletion
     serviceAccountName: eoda-team-sa-argo
@@ -41,7 +41,7 @@ spec:
     - name: size                # Tile size in odc_query.output_crs units
       value: 61440
     - name: tiles_per_worker
-      value: 2
+      value: 8
     - name: dask_image # data-pipeline image to use for Pods
       value: "444488357543.dkr.ecr.us-west-2.amazonaws.com/easi-dask-noml:2023.10.2"
     # IMAGES AND SECRETS

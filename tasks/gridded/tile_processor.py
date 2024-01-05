@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 import rioxarray  # noqa: F401
-from dask.distributed import Client, LocalCluster
+from dask.distributed import Client, LocalCluster, wait
 from datacube.api import GridWorkflow
 from datacube.utils.masking import make_mask, mask_invalid_data
 from eodatasets3 import DatasetPrepare
@@ -108,7 +108,7 @@ class TileProcessor(ArgoTask):
             ds[["red", "green", "blue"]].astype("float32", casting="same_kind")
         )  #  remove the invalid data on Surface reflectance bands prior to masking clouds
         cloud_free = cloud_free.where(cloud_free_mask)
-        
+
         return cloud_free
 
     def scale(self, ds: Dataset) -> Dataset:
@@ -247,7 +247,9 @@ class TileProcessor(ArgoTask):
             #  ds = self.calculate_geomedian(ds)
             ds = ds.median(dim='time')
             ds = ds.persist()
-            self.save(ds=ds, key=key, start=start)
+            # TODO uncomment the self.save line to save the results to s3 Storage
+            wait(ds) # this line isn't required if you save the result
+            # self.save(ds=ds, key=key, start=start)
             self._logger.debug("    Done.")
 
     def process_tile(self) -> None:

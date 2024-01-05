@@ -136,7 +136,6 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
-utilities/azure-devops-eoda-git-ro-creds/git-credentials
 
 # Python debugging script
 testme.py

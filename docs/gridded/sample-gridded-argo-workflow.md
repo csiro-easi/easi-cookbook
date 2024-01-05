@@ -1,5 +1,7 @@
 # Sample Argo workflow – Gridded median <img style="float: right;" src="https://github.com/csiro-easi/easi-notebooks/blob/main/resources/csiro_easi_logo.png?raw=true">  <!-- markdownlint-disable MD033 -->
 
+_Note:_ The sample argo workflows are provided as an pattern only and will _not_ run without modifiction for the specific deployment environment - specifically service accounts, aws account numbers and available docker images and versions. For standard EASI deployment environments there are a series of `# TODO` comments which mark the places where modification is usually required.
+
 ## Use-case
 
 The [sample `Argo` gridded workflow](../workflows/gridded/easi-wf-gridded-full.yaml) demonstrates how
@@ -22,14 +24,13 @@ local `Dask` cluster to calculate geomedians on a handful of tiles.
 
 ### Gridded
 
-The first step is the `Argo` steps object in charge of running the rest and can be seen
-as the workflow itself.
+The first step is the `Argo` steps object in charge of running the rest and is the root of the workflow itself.
 
 ### Tile generator
 
-The extent provided by the user as input to the `Argo` workflow is gridded into`Datacube` `GridWorkflow` cells indexed by keys by a[TileGenerator](../tasks/gridded/tile_generator.py). The cell specification is defined by a defined by a `GridSpec` setting out the size of cells and coordinates of the keys. The `DataCube` is queried for `datasets` but no data is loaded. The cells contain metadata allowing direct subsequent data cube loading without searching the index again which saves repeat database queries and excessive load when the workflow fans out to many workers.
+The extent provided by the user as input to the `Argo` workflow is gridded into`Datacube` `GridWorkflow` cells indexed by keys by a [TileGenerator](../tasks/gridded/tile_generator.py). The cell specification is defined by a `GridSpec` setting out the size of cells and coordinates of the keys which identify them. The `DataCube` is queried for `datasets` but no data is loaded. The cells contain metadata allowing direct subsequent data cube loading without searching the index again which saves repeat database queries and excessive load when the workflow fans out to many workers.
 
-The list of cells are pickled into an `Argo artifact` called `product_cells.pickle` which will be shared with all tile processors. `Artifact`s are the best way to pass non-trivial objects (>256KB) between steps, by storing data to file (compressed to `.tgz` by default). In our example, the keys identifying the cells are divided into sub-lists each containing at most tiles_per_cluster` cells, and each sub-list will be processed by a distinct tile processor.
+The list of cells are pickled into an `Argo artifact` called `product_cells.pickle` which will be shared with all tile processors. `Artifact`s are the best way to pass non-trivial objects (>256KB) between steps, by storing data to file (compressed to `.tgz` by default). In our example, the keys identifying the cells are divided into sub-lists each containing at most `tiles_per_cluster` cells, and each sub-list will be processed by a distinct tile processor.
 
 Using `tiles_per_cluster=2` there are 2 keys in each sub list, each key being a pair of values, e.g.,
 ```
@@ -52,7 +53,7 @@ The last portion of the `Argo` workflow is to perform any wrap-up action. The `o
 
 ## Workflow dynamics
 
-The `tiles_per_worker` and `parallelism` have a significant impact on the length of execution of a `tile-processor` step and how many of them execute in parallel. It is tempting to simply have as many `tile-processors` as there are tiles as this would provide the fastest execution time with a `tile-processor` step execution being the limiting factor. In practice it is more complex as the each `tile-processor` requires a `Pod` to start and stop, and potentially a `Node` to start, pull and image and later shutdown. If the execution of a `tile-processor` step is shorter than this overhead of `Pod` and `Node` initialisation then those steps will be delayed signficantly waiting for resources. Even if `Nodes` are already running and ready for use so a `Pod` can be scheduled immediately, there are overheads and costs assocaited with a `Node` shutting down. They commonly remain available, but idle, for a period of time in case another workload begins. The lack of instant on/off means the workflow `tiles_per_worker` and `parallelism` should be adjusted to achieve the optimimum configuration for a given cost and time efficiency, something that is very user dependent.
+The `tiles_per_worker` and `parallelism` have a significant impact on the length of execution of a `tile-processor` step and how many of them execute in parallel. It is tempting to simply have as many `tile-processors` as there are tiles as this would provide the fastest execution time with a `tile-processor` step execution being the limiting factor. In practice it is more complex as the each `tile-processor` requires a `Pod` to start and stop, and potentially a `Node` to be added to the cluster, start, pull an image and later shutdown. If the execution of a `tile-processor` step is shorter than this overhead of `Pod` and `Node` initialisation then those steps will be delayed signficantly waiting for resources. Even if `Nodes` are already running and ready for use so a `Pod` can be scheduled immediately, there are overheads and costs assocaited with a `Node` shutting down. They commonly remain available, but idle, for a period of time in case another workload begins (in default EASI configurations this is approx 10 minutes). The lack of instant on/off means the workflow `tiles_per_worker` and `parallelism` should be adjusted to achieve the optimimum configuration for a given cost and time efficiency, something that is very use dependent.
 
 ## Workflow Design Patterns
 

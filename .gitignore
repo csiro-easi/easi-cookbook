@@ -144,3 +144,6 @@ logs/
 
 # vscode
 .vscode/
+
+# Dask
+dask-worker-space/

@@ -19,17 +19,17 @@ def tile_generator():
         },
         {
             "name": "odc_query",
-            "value": '{ "output_crs": "epsg:3085", "resolution": [30, 30], '
+            "value": '{ "output_crs": "epsg:3577", "resolution": [30, 30], '
             '"group_by": "solar_day" }',
         },
         {
             "name": "roi",
             "value": '{"time_start": "2022-01-01", "time_end": "2022-02-28", '
             '"boundary": { "type": "Polygon", "crs": { "type": "name", "properties": '
-            '{ "name": "EPSG:4326" } }, "coordinates": [ [ [ -90.27790030796821, '
-            "34.99172934528377 ], [ -90.27790030796821,33.22184045132981 ], "
-            "[ -88.08892787385837,33.22184045132981 ], [ -88.08892787385837, "
-            "34.99172934528377 ], [ -90.27790030796821, 34.99172934528377 ] ] ] } }",
+            '{ "name": "EPSG:4326" } }, "coordinates": [ [ [ 149.21, '
+            "-35.21 ], [ 148.98,-35.21 ], "
+            "[ 148.98,-35.39 ], [ 149.21, "
+            "-35.39 ], [ 149.21, -35.21 ] ] ] } }",
         },
         {
             "name": "size",
@@ -64,11 +64,12 @@ def test_tile_processor():
         },
         {
             "name": "output",
-            "value": f'{{"bucket": "eoda-dev-user-scratch", "prefix": "{userid}/geomedian"}}',
+            # TODO Replace with values suitable for your deployment environment.
+            "value": f'{{"bucket": "my-cluster-user-scratch", "prefix": "{userid}/geomedian"}}',
         },
         {
             "name": "key",
-            "value": "[[41, 125], [41, 128]]",
+            "value": "[[24, -65], [25, -65]]",
         },
     ]
     logging.info("Start tile-process...")

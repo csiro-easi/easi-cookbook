@@ -1,5 +1,6 @@
+ARG PLATFORM=linux/amd64
 # Note: You can use any Debian/Ubuntu based image you want.
-FROM 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-workflows-base:test
+FROM --platform=${PLATFORM} 444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-workflows-base:test
 # This Dockerfile adds a non-root user with sudo access. Use the "remoteUser"
 # property in devcontainer.json to use it. On Linux, the container user's GID/UIDs
 # will be updated to match your local UID/GID (when using the dockerFile property).

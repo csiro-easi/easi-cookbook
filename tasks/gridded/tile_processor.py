@@ -8,7 +8,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pandas as pd
-import rioxarray  # noqa: F401
 from dask.distributed import Client, LocalCluster, wait
 from datacube.api import GridWorkflow
 from datacube.utils.masking import make_mask, mask_invalid_data
@@ -51,6 +50,7 @@ class TileProcessor(ArgoTask):
 
         self._client = None
         self._cluster = None
+        self._nworkers = 4
 
         # Unpickle the product cells from file
         with open(TileGenerator.FILEPATH_CELLS, "rb") as fh:
@@ -59,7 +59,7 @@ class TileProcessor(ArgoTask):
     def start_client(self) -> None:
         """Start a local dask cluster, if needed."""
         if self._client is None:
-            self._cluster = LocalCluster()
+            self._cluster = LocalCluster(n_workers=self._nworkers)
             self._client = Client(self._cluster)
             configure_s3_access(aws_unsigned=False, requester_pays=True, client=self._client)
 

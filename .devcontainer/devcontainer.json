@@ -22,4 +22,5 @@
 		]
 	}
 },
+	"initializeCommand": "aws sso login --profile MY-AWS-PROFILE && (aws ecr get-login-password --region ap-southeast-2 --profile MY-AWS-PROFILE | docker login --username AWS --password-stdin AWS_ACCOUNT.dkr.ecr.ap-southeast-2.amazonaws.com)"
 }

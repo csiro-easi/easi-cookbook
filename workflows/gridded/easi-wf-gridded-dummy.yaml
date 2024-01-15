@@ -143,7 +143,7 @@ spec:
       - name: size                  # Tile Size in metres
       - name: tiles_per_worker      # Number of tiles to send to a worker for processing
       - name: git_image
-      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-repo          # A sidecar package repo
       - name: package-branch        # The sidecar package repo branch
       - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
       - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
@@ -245,7 +245,7 @@ spec:
       - name: measurements
       - name: output
       - name: key
-      - name: package-repo          # A sidecar package repo, usually https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows
+      - name: package-repo          # A sidecar package repo
       - name: package-branch        # The sidecar package repo branch
       - name: package-path          # Top level dir in which sidecar package will be downloaded to, e.g. {{package-path}}/easi-workflows
       - name: package-secret        # Git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)

@@ -11,9 +11,9 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_DATABASE: ${DB_DATABASE}
+      AWS_PROFILE: ${AWS_PROFILE}
+      PYTHONPATH: ${PYTHONPATH}
       JUPYTERHUB_API_TOKEN: 0000
     volumes:
       - ~/.aws:/home/vscode/.aws
-      - ~/.easi-workflows-auth.conf:/home/vscode/.easi-workflows-auth.conf
-      - ~/dev/devcontainers/data:/data
     restart: no

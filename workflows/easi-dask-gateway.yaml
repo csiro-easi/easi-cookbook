@@ -18,7 +18,7 @@ metadata:
 #  - dask cluster addres/id: write to an envvar for use by the notebooks
 
 spec:
-  serviceAccount: cenv-nbic-team-sa-argo
+  serviceAccountName: cenv-nbic-team-sa-argo
   entrypoint: start
 
   podGC:
@@ -59,39 +59,48 @@ spec:
   templates:
     - name: start
       steps:
-      - - name: shutdown_all_clusters
-          template: shutdown_all_clusters
-      - - name: generate_work
-          template: generate_work
+      - - name: shutdown-all-clusters-start
+          template: shutdown-all-clusters
+      - - name: generate-work
+          template: generate-work
 
       # Either
       # - create dask cluster, pass to notebook via env var or config parameters
-      - - name: argo_creates_daskgateway
-          template: argo_creates_daskgateway
+      - - name: argo-creates-daskgateway
+          template: argo-creates-daskgateway
       # Or
       # - set env vars to fake a jhub, then notebook creates cluster
-      - - name: work_creates_daskgateway
-          template: work_creates_daskgateway
+      - - name: work-creates-daskgateway
+          template: work-creates-daskgateway
   
-      - - name: shutdown_all_clusters
-          template: shutdown_all_clusters
+      - - name: shutdown-all-clusters-end
+          template: shutdown-all-clusters
 
+
+    ##--------------------------------
+    - name: generate-work
+      script:
+        image: "{{workflow.parameters.wf_image}}"
+        imagePullPolicy: IfNotPresent
+        command: [python]
+        source: |
+            print('Work created')
 
 
     ##--------------------------------
     # Argo creates dask-gateway
-    - name: argo_creates_daskgateway
+    - name: argo-creates-daskgateway
       steps:
       # - - name: get_aws_credentials
       #     template: get_aws_credentials
-      - - name: init_dask_cluster
-          template: init_dask_cluster
-      - - name: do_work
-          template: do_work
+      - - name: init-dask-cluster
+          template: init-dask-cluster
+      - - name: do-work
+          template: do-work
 
-    - name: init_dask_cluster
+    - name: init-dask-cluster
       script:
-        image: {{workflow.parameters.wf_image}}
+        image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
           - name: argo_dask_service_account
@@ -185,9 +194,9 @@ spec:
           logging.info("Cluster shutdown")
 
 
-    - name: do_work
+    - name: do-work
       script:
-        image: {{workflow.parameters.wf_image}}
+        image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         command: [python]
         source: |
@@ -246,7 +255,7 @@ spec:
 
 
     ##--------------------------------
-    - name: work_creates_daskgateway
+    - name: work-creates-daskgateway
 
       volumes:
       - name: git-sync
@@ -266,7 +275,7 @@ spec:
               git clone --depth 1 --branch "{{workflow.parameters.package-branch}}" "{{workflow.parameters.package-repo}}"
 
       script:
-        image: {{workflow.parameters.wf_image}}
+        image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
           - name: argo_dask_service_account
@@ -337,8 +346,8 @@ spec:
     # {{workflow.status}} will be one of: Succeeded, Failed, Error
     - name: exit-handler
       steps:
-      - - name: shutdown_all_clusters
-          template: shutdown_all_clusters
+      - - name: shutdown-all-clusters
+          template: shutdown-all-clusters
         - name: celebrate
           template: celebrate
           when: "{{workflow.status}} == Succeeded"
@@ -346,9 +355,9 @@ spec:
           template: cry
           when: "{{workflow.status}} != Succeeded"
 
-    - name: shutdown_all_clusters
+    - name: shutdown-all-clusters
       script:
-        image: {{workflow.parameters.wf_image}}
+        image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
           - name: argo_dask_service_account

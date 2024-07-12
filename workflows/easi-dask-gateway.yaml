@@ -40,13 +40,13 @@ spec:
         value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
       # ADD A CODE REPOSITORY (if not built in the wf_image)
       - name: package-repo
-        value: "https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows"  # private azure
+        value: "https://https://github.com/csiro-easi/easi-cookbook"
       - name: package-branch
-        value: "main"
+        value: "argo-dask"
       - name: package-path
         value: "/opt/repo"
       - name: package-secret
-        value: azure-devops-easi-hub-git-ro-creds  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+        value: ""
 
   volumes:
     - name: argo_dask_service_account
@@ -55,22 +55,6 @@ spec:
         items:
           - key: jhub_api_token
             path: .jhub-api-token
-
-  initContainers:
-    - name: init0
-      image: alpine/git:latest
-      imagePullPolicy: IfNotPresent
-      mirrorVolumeMounts: false
-      volumeMounts:
-        - name: git-sync
-          mountPath: "{{workflow.parameters.package-path}}"
-        - name: git-secret
-          mountPath: "/secret/git"
-      command: [/bin/sh, -c]
-      args:
-        - cd "{{workflow.parameters.package-path}}" &&
-          git config --global credential.helper "store --file /secret/git/.git-credentials" &&
-          git clone --depth 1 --branch "{{workflow.parameters.package-branch}}" "{{workflow.parameters.package-repo}}"
 
   templates:
     - name: start
@@ -89,7 +73,7 @@ spec:
       - - name: work_creates_daskgateway
           template: work_creates_daskgateway
   
-      - - name: kill_all_clusters
+      - - name: shutdown_all_clusters
           template: shutdown_all_clusters
 
 
@@ -98,6 +82,8 @@ spec:
     # Argo creates dask-gateway
     - name: argo_creates_daskgateway
       steps:
+      # - - name: get_aws_credentials
+      #     template: get_aws_credentials
       - - name: init_dask_cluster
           template: init_dask_cluster
       - - name: do_work
@@ -261,8 +247,87 @@ spec:
 
     ##--------------------------------
     - name: work_creates_daskgateway
+
+      volumes:
+      - name: git-sync
+        emptyDir: {}
+
+      initContainers:
+        - name: init0
+          image: alpine/git:latest
+          imagePullPolicy: IfNotPresent
+          mirrorVolumeMounts: true
+          volumeMounts:
+            - name: git-sync
+              mountPath: "{{workflow.parameters.package-path}}"
+          command: [/bin/sh, -c]
+          args:
+            - cd "{{workflow.parameters.package-path}}" &&
+              git clone --depth 1 --branch "{{workflow.parameters.package-branch}}" "{{workflow.parameters.package-repo}}"
+
       script:
-        image: abc
+        image: {{workflow.parameters.wf_image}}
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: argo_dask_service_account
+            mountPath: '/root'
+        env:
+          - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE
+            value: "{{workflow.parameters.dask_worker_image}}"
+          - name: DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION
+            value: "{{workflow.labels.team}}"
+          - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY
+            value: IfNotPresent
+          - name: TRAEFIK_DASK_GATEWAY_SERVICE_HOST
+            value: "{{workflow.parameters.dask_gateway_address}}"
+          
+        # API_DASK_GATEWAY_PORT=tcp://172.20.212.192:8000
+        # API_DASK_GATEWAY_PORT_8000_TCP=tcp://172.20.212.192:8000
+        # API_DASK_GATEWAY_PORT_8000_TCP_ADDR=172.20.212.192
+        # API_DASK_GATEWAY_PORT_8000_TCP_PORT=8000
+        # API_DASK_GATEWAY_PORT_8000_TCP_PROTO=tcp
+        # API_DASK_GATEWAY_SERVICE_HOST=172.20.212.192
+        # API_DASK_GATEWAY_SERVICE_PORT=8000
+
+        # DASK_GATEWAY__CLUSTER__OPTIONS__AWS_ACCESS_KEY_ID=
+        # DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SECRET_ACCESS_KEY=
+        # DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SESSION_TOKEN=
+        # DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION='R-91296-1'
+        # DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE=444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest
+        # DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY=Always
+
+        # TRAEFIK_DASK_GATEWAY_PORT=tcp://172.20.165.150:80
+        # TRAEFIK_DASK_GATEWAY_PORT_80_TCP=tcp://172.20.165.150:80
+        # TRAEFIK_DASK_GATEWAY_PORT_80_TCP_ADDR=172.20.165.150
+        # TRAEFIK_DASK_GATEWAY_PORT_80_TCP_PORT=80
+        # TRAEFIK_DASK_GATEWAY_PORT_80_TCP_PROTO=tcp
+        # TRAEFIK_DASK_GATEWAY_SERVICE_HOST=172.20.165.150
+        # TRAEFIK_DASK_GATEWAY_SERVICE_PORT=80
+        # TRAEFIK_DASK_GATEWAY_SERVICE_PORT_WEB=80
+        
+        command: [python]
+        source: |
+          import os
+          from dask_gateway.auth import JupyterHubAuth
+          from datacube.utils.aws import configure_s3_access
+          from botocore.credentials import RefreshableCredentials
+
+          # Obtain AWS credentials from the serviceAccount assigned to this pod
+          # Refresh if necessary and obtain the frozen version for use in the Dask Workers
+          credentials = configure_s3_access(aws_unsigned=False, requester_pays=True)
+          if isinstance(credentials, RefreshableCredentials):
+              if credentials.refresh_needed():
+                  credentials = configure_s3_access(aws_unsigned=False, requester_pays=True)
+              logging.info(f'Credentials time remaining: {credentials._seconds_remaining()} seconds')
+          frozen_creds = credentials.get_frozen_credentials()
+
+          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_ACCESS_KEY_ID'] = frozen_creds.access_key
+          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SECRET_ACCESS_KEY'] = frozen_creds.secret_key
+          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SESSION_TOKEN'] = frozen_creds.token
+
+
+
+          
 
 
     ##--------------------------------

@@ -49,7 +49,7 @@ spec:
         value: ""
 
   volumes:
-    - name: argo_dask_service_account
+    - name: argo-dask-service-account
       secret:
         secretName: cenv-nbic-team-jupyterhub-sa-api-token
         items:
@@ -61,8 +61,8 @@ spec:
       steps:
       - - name: shutdown-all-clusters-start
           template: shutdown-all-clusters
-      - - name: generate-work
-          template: generate-work
+      # - - name: generate-work
+      #     template: generate-work
 
       # Either
       # - create dask cluster, pass to notebook via env var or config parameters
@@ -70,8 +70,8 @@ spec:
           template: argo-creates-daskgateway
       # Or
       # - set env vars to fake a jhub, then notebook creates cluster
-      - - name: work-creates-daskgateway
-          template: work-creates-daskgateway
+      # - - name: work-creates-daskgateway
+      #     template: work-creates-daskgateway
   
       - - name: shutdown-all-clusters-end
           template: shutdown-all-clusters
@@ -95,15 +95,15 @@ spec:
       #     template: get_aws_credentials
       - - name: init-dask-cluster
           template: init-dask-cluster
-      - - name: do-work
-          template: do-work
+      # - - name: do-work
+      #     template: do-work
 
     - name: init-dask-cluster
       script:
         image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
-          - name: argo_dask_service_account
+          - name: argo-dask-service-account
             mountPath: '/root'
         command: [python]
         source: |
@@ -114,6 +114,7 @@ spec:
           from datacube.utils.aws import configure_s3_access
           from botocore.credentials import RefreshableCredentials
 
+          import logging
           logging.basicConfig(level=logging.INFO)
 
           def create_cluster(
@@ -131,7 +132,8 @@ spec:
               else:
                   # Start new cluster
                   cluster_name = gateway.submit(cluster_options=options)   # This is non-blocking, multiple clusters can be requested simultaneously
-                  logging.info(f'Created new cluster: {cluster_name})
+                  cluster = gateway.connect(cluster_name)
+                  logging.info(f'Created new cluster: {cluster_name}')
               if adapt:
                   logging.info('Set cluster to adapt')
                   cluster.adapt(minimum = workers[0], maximum=workers[1])
@@ -248,6 +250,9 @@ spec:
           #     logging.info("Results completed.")
           #     logging.info(results)
 
+          import logging
+          logging.basicConfig(level=logging.INFO)
+
           # Shutdown the cluster
           client.close()
           cluster.shutdown()
@@ -278,7 +283,7 @@ spec:
         image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
-          - name: argo_dask_service_account
+          - name: argo-dask-service-account
             mountPath: '/root'
         env:
           - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE
@@ -321,6 +326,9 @@ spec:
           from datacube.utils.aws import configure_s3_access
           from botocore.credentials import RefreshableCredentials
 
+          import logging
+          logging.basicConfig(level=logging.INFO)
+
           # Obtain AWS credentials from the serviceAccount assigned to this pod
           # Refresh if necessary and obtain the frozen version for use in the Dask Workers
           credentials = configure_s3_access(aws_unsigned=False, requester_pays=True)
@@ -360,14 +368,16 @@ spec:
         image: "{{workflow.parameters.wf_image}}"
         imagePullPolicy: IfNotPresent
         volumeMounts:
-          - name: argo_dask_service_account
+          - name: argo-dask-service-account
             mountPath: '/root'
             readOnly: true
         command: [python]
         source: |
           from dask_gateway import Gateway
           from dask_gateway.auth import JupyterHubAuth
+
           import logging
+          logging.basicConfig(level=logging.INFO)
 
           def shutdown_all_clusters(address, api_token):
               auth = JupyterHubAuth(api_token=api_token)
@@ -381,9 +391,7 @@ spec:
               api_token = f.read()
           address = '{{workflow.parameters.dask_gateway_address}}'
 
-          logging.basicConfig(level=logging.INFO)
           logging.info("onExit Shutdown process")
-
           shutdown_all_clusters(address, api_token)
 
     # Option exists to send a notification somewhere

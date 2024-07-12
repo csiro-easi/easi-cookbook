@@ -1,0 +1,326 @@
+## Usage: argo submit easi-dask-gateway.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+
+metadata:
+  generateName: easi-dask-gateway-
+  namespace: cenv-nbic-argo
+  labels:
+    team: R-19830-01
+    owner: Matt
+
+# TODO: Check
+#  - onExit handler: kill all clusters in namespace (can not differentiate)
+#  - mutex: one workflow at a time (because of the onExit handler)
+#  - active deadline seconds: placeholder
+#  - podGC: on workflow completion (success or error)
+#  - dask workers: upload custom packages
+#  - dask cluster addres/id: write to an envvar for use by the notebooks
+
+spec:
+  serviceAccount: cenv-nbic-team-sa-argo
+  entrypoint: start
+
+  podGC:
+    strategy: OnPodCompletion
+  onExit: exit-handler  # Shutdown all dask clusters
+  synchronization:
+    mutex:
+      name:  dask_in_argo  # Allow only one "dask_in_argo" workflow at a time
+  
+  arguments:
+    parameters:
+      # USER INPUTS
+      - name: wf_image
+        value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
+      # DASK-GATEWAY
+      - name: dask_gateway_address
+        value: "http://traefik-dask-gateway.easihub/services/dask-gateway"
+      - name: dask_worker_image
+        value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
+      # ADD A CODE REPOSITORY (if not built in the wf_image)
+      - name: package-repo
+        value: "https://dev.azure.com/csiro-easi/easi-hub-partners/_git/easi-workflows"  # private azure
+      - name: package-branch
+        value: "main"
+      - name: package-path
+        value: "/opt/repo"
+      - name: package-secret
+        value: azure-devops-easi-hub-git-ro-creds  # git-credentials format, e.g. git-credentials: $(echo -n "https://username:password@dev.azure.com | base64)
+
+  volumes:
+    - name: argo_dask_service_account
+      secret:
+        secretName: cenv-nbic-team-jupyterhub-sa-api-token
+        items:
+          - key: jhub_api_token
+            path: .jhub-api-token
+
+  initContainers:
+    - name: init0
+      image: alpine/git:latest
+      imagePullPolicy: IfNotPresent
+      mirrorVolumeMounts: false
+      volumeMounts:
+        - name: git-sync
+          mountPath: "{{workflow.parameters.package-path}}"
+        - name: git-secret
+          mountPath: "/secret/git"
+      command: [/bin/sh, -c]
+      args:
+        - cd "{{workflow.parameters.package-path}}" &&
+          git config --global credential.helper "store --file /secret/git/.git-credentials" &&
+          git clone --depth 1 --branch "{{workflow.parameters.package-branch}}" "{{workflow.parameters.package-repo}}"
+
+  templates:
+    - name: start
+      steps:
+      - - name: shutdown_all_clusters
+          template: shutdown_all_clusters
+      - - name: generate_work
+          template: generate_work
+
+      # Either
+      # - create dask cluster, pass to notebook via env var or config parameters
+      - - name: argo_creates_daskgateway
+          template: argo_creates_daskgateway
+      # Or
+      # - set env vars to fake a jhub, then notebook creates cluster
+      - - name: work_creates_daskgateway
+          template: work_creates_daskgateway
+  
+      - - name: kill_all_clusters
+          template: shutdown_all_clusters
+
+
+
+    ##--------------------------------
+    # Argo creates dask-gateway
+    - name: argo_creates_daskgateway
+      steps:
+      - - name: init_dask_cluster
+          template: init_dask_cluster
+      - - name: do_work
+          template: do_work
+
+    - name: init_dask_cluster
+      script:
+        image: {{workflow.parameters.wf_image}}
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: argo_dask_service_account
+            mountPath: '/root'
+        command: [python]
+        source: |
+          import sys
+          from dask.distributed import Client
+          from dask_gateway import Gateway
+          from dask_gateway.auth import JupyterHubAuth
+          from datacube.utils.aws import configure_s3_access
+          from botocore.credentials import RefreshableCredentials
+
+          logging.basicConfig(level=logging.INFO)
+
+          def create_cluster(
+              gateway: Gateway,
+              cluster_name: str = None,
+              workers: tuple = (0,1),
+              adapt = False,
+              options = None,
+          ):
+              clusters = gateway.list_clusters()
+              if cluster_name is not None and cluster_name in clusters:
+                  # Connect to existing cluster
+                  cluster = gateway.connect(cluster_name)   # This will block until the cluster enters the running state
+                  logging.info(f'Connected to existing cluster: {cluster_name}')
+              else:
+                  # Start new cluster
+                  cluster_name = gateway.submit(cluster_options=options)   # This is non-blocking, multiple clusters can be requested simultaneously
+                  logging.info(f'Created new cluster: {cluster_name})
+              if adapt:
+                  logging.info('Set cluster to adapt')
+                  cluster.adapt(minimum = workers[0], maximum=workers[1])
+              else:
+                  logging.info('Set cluster to scale')
+                  cluster.scale(workers[0])
+              return cluster
+
+          # Get api token from the mounted token
+          with open('/root/.jhub-api-token','r') as f:
+              api_token = f.read()
+          address = "{{workflow.parameters.dask_gateway_address}}"
+          
+          auth = JupyterHubAuth(api_token=api_token)
+          gateway = Gateway(address=address, auth=auth)
+          
+          # TESTING: Sanity check
+          options = gateway.cluster_options()
+          clusters = gateway.list_clusters()
+          print(options)
+          print(clusters)
+          sys.exit(0)
+
+          # Obtain AWS credentials from the serviceAccount assigned to this pod
+          # Refresh if necessary and obtain the frozen version for use in the Dask Workers
+          credentials = configure_s3_access(aws_unsigned=False, requester_pays=True)
+          if isinstance(credentials, RefreshableCredentials):
+              if credentials.refresh_needed():
+                  credentials = configure_s3_access(aws_unsigned=False, requester_pays=True)
+              logging.info(f'Credentials time remaining: {credentials._seconds_remaining()} seconds')
+          frozen_creds = credentials.get_frozen_credentials()
+
+          # Set Dask-gateway options
+          # TODO: Get from input parameters
+          options = gateway.cluster_options()
+          adapt = False
+          max_workers= 16
+          options.node_selection = "worker8x"
+          options.worker_cores = 8
+          options.worker_memory = 30
+          options.image = "{{workflow.parameters.dask_worker_image}}"
+          options.aws_session_token = frozen_creds.token
+          options.aws_access_key_id = frozen_creds.access_key
+          options.aws_secret_access_key = frozen_creds.secret_key
+
+          # Start dask cluster
+          cluster = create_cluster(
+              gateway=gateway,
+              cluster_name = None,
+              workers = (0,1),
+              adapt = False,
+              options = options,
+          )
+
+          # TODO: Pickle cluster for passing to the next Argo workers
+
+          # TESTING: Shutdown the cluster
+          client.close()
+          cluster.shutdown()
+          logging.info("Cluster shutdown")
+
+
+    - name: do_work
+      script:
+        image: {{workflow.parameters.wf_image}}
+        imagePullPolicy: IfNotPresent
+        command: [python]
+        source: |
+          # Several strategies are described here for consideration, depending on your application
+          # They have slightly different submission times and scheduler impacts
+          # Which is most appropriate depends on the overall workload and the stability of some features in Dask (particularly strategy 1)
+          # 
+          # Strategy 1: Priority Map - processes the result task graphs in parallel and submit them
+          #
+          #   priority = list(reversed(range(len(results))))
+          #
+          #   client.wait_for_workers(n_workers=min_workers)
+          #   logging.info("Waiting for workers")
+          #
+          #   client.scatter()
+          #   results_future = client.scatter(results)
+          #   futures = client.map(compute_result, results_future, priority)
+          #   logging.info("Waiting for results...")
+          #   results = client.gather(futures)
+          #
+          # Strategy 2: Compute each result one at a time. Will pause to process each task graph each time
+          #
+          #   results = list()
+          #   for res in results:
+          #       logging.info('Processing a tile...')
+          #       a_result = res.compute(retries=3)
+          #       results.append(a_result)
+          #       logging.info('Completed a tile')
+          #
+          # Strategy 3: Submit one at a time, optimising one at a time. Will be scheduled as they become ready and executed when the scheduler can receive them.
+          # It can be slow analysing the task graph for all Tiles together as Dask seeks out any repeated work to optimise out. This can take longer
+          # than just reloading that section of data if there is one so in this case is not a useful optimisation.
+          # fifo_timeout will assist in notifying the scheduler that these are different submissions and should be considered independently and done in submission order
+          # this encourages dask to complete work (and reduce cluster memory pressure) though in practice there are a lot of available threads so everything stays busy
+          #
+          #   cluster.scale(min_workers)
+          #   client.wait_for_workers(n_workers=min_workers)
+          #   logging.info("Waiting for workers")
+          #
+          #   futures = list()
+          #   for r in results:
+          #       logging.info("Processing tile...")
+          #       futures.append(
+          #           client.compute(r, fifo_timeout='0ms',retries=3)    # Use client.compute() here so we get a Future back and can wait on it
+          #       )
+          #    logging.info("Waiting for results...")
+          #    results = client.gather(futures)
+          #
+          #     logging.info("Results completed.")
+          #     logging.info(results)
+
+          # Shutdown the cluster
+          client.close()
+          cluster.shutdown()
+          logging.info("Cluster shutdown")
+
+
+    ##--------------------------------
+    - name: work_creates_daskgateway
+      script:
+        image: abc
+
+
+    ##--------------------------------
+    # Exit handler templates
+    # After the completion of the entrypoint template, the status of the
+    # workflow is made available in the global variable {{workflow.status}}.
+    # {{workflow.status}} will be one of: Succeeded, Failed, Error
+    - name: exit-handler
+      steps:
+      - - name: shutdown_all_clusters
+          template: shutdown_all_clusters
+        - name: celebrate
+          template: celebrate
+          when: "{{workflow.status}} == Succeeded"
+        - name: cry
+          template: cry
+          when: "{{workflow.status}} != Succeeded"
+
+    - name: shutdown_all_clusters
+      script:
+        image: {{workflow.parameters.wf_image}}
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: argo_dask_service_account
+            mountPath: '/root'
+            readOnly: true
+        command: [python]
+        source: |
+          from dask_gateway import Gateway
+          from dask_gateway.auth import JupyterHubAuth
+          import logging
+
+          def shutdown_all_clusters(address, api_token):
+              auth = JupyterHubAuth(api_token=api_token)
+              gateway = Gateway(address=address,  auth=auth)
+              clusters = gateway.list_clusters()
+              logging.info(f"Shutting down these running clusters:\n {clusters}")
+              for cluster in clusters:
+                  gateway.connect(cluster.name).shutdown()
+
+          with open('/root/.jhub-api-token', 'r') as f:
+              api_token = f.read()
+          address = '{{workflow.parameters.dask_gateway_address}}'
+
+          logging.basicConfig(level=logging.INFO)
+          logging.info("onExit Shutdown process")
+
+          shutdown_all_clusters(address, api_token)
+
+    # Option exists to send a notification somewhere
+    - name: celebrate
+      container:
+        image: alpine:latest
+        command: [sh, -c]
+        args: ["echo hooray!"]
+
+    - name: cry
+      container:
+        image: alpine:latest
+        command: [sh, -c]
+        args: ["echo boohoo!"]

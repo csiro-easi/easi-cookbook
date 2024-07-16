@@ -15,7 +15,7 @@ metadata:
 #  - active deadline seconds: placeholder
 #  - podGC: on workflow completion (success or error)
 #  - dask workers: upload custom packages
-#  - dask cluster addres/id: write to an envvar for use by the notebooks
+#  - dask cluster address/id: write to an envvar for use by the notebooks
 
 spec:
   serviceAccountName: cenv-nbic-team-sa-argo
@@ -188,7 +188,11 @@ spec:
               options = options,
           )
 
-          # TODO: Pickle cluster for passing to the next Argo workers
+          # TODO: Pickle cluster for passing to the next Argo workers?
+          # Not likely. Dask futures will/should die when the Argo worker finishes (and the python process completes)
+          # Better to start a dask cluster (and re-use resources) for each Argo worker
+
+          # TODO: Add the "do work" section here
 
           # TESTING: Shutdown the cluster
           client.close()
@@ -292,7 +296,7 @@ spec:
             value: "{{workflow.labels.team}}"
           - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY
             value: IfNotPresent
-          - name: TRAEFIK_DASK_GATEWAY_SERVICE_HOST
+          - name: DASK_GATEWAY__ADDRESS    # or TRAEFIK_DASK_GATEWAY_SERVICE_HOST?
             value: "{{workflow.parameters.dask_gateway_address}}"
           
         # API_DASK_GATEWAY_PORT=tcp://172.20.212.192:8000
@@ -309,6 +313,9 @@ spec:
         # DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION='R-91296-1'
         # DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE=444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest
         # DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY=Always
+
+        # See Jhub: /etc/dask/dask.yaml
+        # DASK_GATEWAY__ADDRESS=http://traefik-dask-gateway.easihub/services/dask-gateway
 
         # TRAEFIK_DASK_GATEWAY_PORT=tcp://172.20.165.150:80
         # TRAEFIK_DASK_GATEWAY_PORT_80_TCP=tcp://172.20.165.150:80

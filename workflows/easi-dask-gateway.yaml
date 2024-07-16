@@ -22,7 +22,7 @@ spec:
   entrypoint: start
 
   podGC:
-    strategy: OnPodCompletion
+    strategy: OnPodSuccess  #OnPodCompletion
   onExit: exit-handler  # Shutdown all dask clusters
   synchronization:
     mutex:
@@ -32,7 +32,8 @@ spec:
     parameters:
       # USER INPUTS
       - name: wf_image
-        value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
+        # value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
+        value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-jupyter-noml-singleserver:develop.latest"
       # DASK-GATEWAY
       - name: dask_gateway_address
         value: "http://traefik-dask-gateway.easihub/services/dask-gateway"
@@ -40,7 +41,7 @@ spec:
         value: "444488357543.dkr.ecr.ap-southeast-2.amazonaws.com/easi-dask-noml:develop.latest"
       # ADD A CODE REPOSITORY (if not built in the wf_image)
       - name: package-repo
-        value: "https://https://github.com/csiro-easi/easi-cookbook"
+        value: "https://github.com/csiro-easi/easi-cookbook"
       - name: package-branch
         value: "argo-dask"
       - name: package-path
@@ -66,12 +67,12 @@ spec:
 
       # Either
       # - create dask cluster, pass to notebook via env var or config parameters
-      - - name: argo-creates-daskgateway
-          template: argo-creates-daskgateway
+      # - - name: argo-creates-daskgateway
+      #     template: argo-creates-daskgateway
       # Or
       # - set env vars to fake a jhub, then notebook creates cluster
-      # - - name: work-creates-daskgateway
-      #     template: work-creates-daskgateway
+      - - name: work-creates-daskgateway
+          template: work-creates-daskgateway
   
       - - name: shutdown-all-clusters-end
           template: shutdown-all-clusters
@@ -275,9 +276,6 @@ spec:
           image: alpine/git:latest
           imagePullPolicy: IfNotPresent
           mirrorVolumeMounts: true
-          volumeMounts:
-            - name: git-sync
-              mountPath: "{{workflow.parameters.package-path}}"
           command: [/bin/sh, -c]
           args:
             - cd "{{workflow.parameters.package-path}}" &&
@@ -289,6 +287,8 @@ spec:
         volumeMounts:
           - name: argo-dask-service-account
             mountPath: '/root'
+          - name: git-sync
+            mountPath: "{{workflow.parameters.package-path}}"
         env:
           - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE
             value: "{{workflow.parameters.dask_worker_image}}"
@@ -332,9 +332,17 @@ spec:
           from dask_gateway.auth import JupyterHubAuth
           from datacube.utils.aws import configure_s3_access
           from botocore.credentials import RefreshableCredentials
+          import subprocess
+          from pathlib import Path
 
           import logging
           logging.basicConfig(level=logging.INFO)
+
+          package_path = "{{workflow.parameters.package-path}}"
+          package_repo = "{{workflow.parameters.package-repo}}"
+          repo = Path(package_path) / package_repo.split('/')[-1]
+          # sys.path.insert(1, str(repo))
+
 
           # Obtain AWS credentials from the serviceAccount assigned to this pod
           # Refresh if necessary and obtain the frozen version for use in the Dask Workers
@@ -345,12 +353,37 @@ spec:
               logging.info(f'Credentials time remaining: {credentials._seconds_remaining()} seconds')
           frozen_creds = credentials.get_frozen_credentials()
 
-          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_ACCESS_KEY_ID'] = frozen_creds.access_key
-          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SECRET_ACCESS_KEY'] = frozen_creds.secret_key
-          os.environ['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SESSION_TOKEN'] = frozen_creds.token
+          env = {}
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_ACCESS_KEY_ID'] = frozen_creds.access_key
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SECRET_ACCESS_KEY'] = frozen_creds.secret_key
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__AWS_SESSION_TOKEN'] = frozen_creds.token
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE'] = "{{workflow.parameters.dask_worker_image}}"
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION'] = "{{workflow.labels.team}}"
+          env['DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY'] = 'IfNotPresent'
+          env['DASK_GATEWAY__ADDRESS'] = "{{workflow.parameters.dask_gateway_address}}"
 
 
+          notebook = 'argo-dask/simple-dask-gateway-example.ipynb'
+          logging.info(f'Run the notebook please: {repo / notebook}')
 
+          # jupyter nbconvert --ExecutePreprocessor.timeout=72000 \
+          #     --ExecutePreprocessor.kernel_name=myenv --execute \
+          #     --to notebook \
+          #     f"{wf_params['package-path']}/{notebook}"
+          cmd = [
+              '/env/bin/jupyter', 'nbconvert',
+              '--ExecutePreprocessor.timeout=72000',
+              '--execute', '--to', 'notebook',
+              f'{repo / notebook}'
+          ]
+          cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+          try:
+              cp.check_returncode()
+              logging.info('Notebook Success!')
+              logging.info(cp.stdout.decode('utf-8'))
+          except subprocess.CalledProcessError:
+              logging.error(cp.stdout.decode('utf-8'))
+              raise
           
 
 

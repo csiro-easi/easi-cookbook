@@ -7527,10 +7527,12 @@ a.anchor-link {
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
+<div class="jp-InputPrompt jp-InputArea-prompt">In [1]:</div>
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
-<div class="highlight hl-ipython3"><pre><span></span><span class="kn">from</span> <span class="nn">dask_gateway</span> <span class="kn">import</span> <span class="n">Gateway</span>
+<div class="highlight hl-ipython3"><pre><span></span><span class="kn">from</span> <span class="nn">dask_gateway.auth</span> <span class="kn">import</span> <span class="n">JupyterHubAuth</span>
+<span class="kn">from</span> <span class="nn">dask_gateway</span> <span class="kn">import</span> <span class="n">Gateway</span>
+<span class="kn">import</span> <span class="nn">os</span>
 <span class="kn">import</span> <span class="nn">logging</span>
 
 <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
@@ -7544,7 +7546,7 @@ a.anchor-link {
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
+<div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div>
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
 <div class="highlight hl-ipython3"><pre><span></span><span class="k">def</span> <span class="nf">create_cluster</span><span class="p">(</span>
@@ -7577,6 +7579,56 @@ a.anchor-link {
 </div>
 </div>
 </div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=7bf571e1-062e-4a97-a91f-910feb15dcb5">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [3]:</div>
+<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="cm-editor cm-s-jupyter">
+<div class="highlight hl-ipython3"><pre><span></span><span class="n">dask_gateway_address</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s1">'DASK_GATEWAY__ADDRESS'</span><span class="p">]</span>
+<span class="n">api_token</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s1">'JUPYTERHUB_API_TOKEN'</span><span class="p">]</span>
+
+<span class="n">auth</span> <span class="o">=</span> <span class="n">JupyterHubAuth</span><span class="p">(</span><span class="n">api_token</span><span class="o">=</span><span class="n">api_token</span><span class="p">)</span>
+<span class="n">gateway</span> <span class="o">=</span> <span class="n">Gateway</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="n">address</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">auth</span><span class="p">)</span>
+
+<span class="n">cluster</span> <span class="o">=</span> <span class="n">create_cluster</span><span class="p">(</span><span class="n">gateway</span><span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">cluster</span><span class="o">.</span><span class="n">get_client</span><span class="p">()</span>
+<span class="n">display</span><span class="p">(</span><span class="n">cluster</span><span class="p">)</span>
+<span class="n">display</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell-outputWrapper">
+<div class="jp-Collapser jp-OutputCollapser jp-Cell-outputCollapser">
+</div>
+<div class="jp-OutputArea jp-Cell-outputArea">
+<div class="jp-OutputArea-child">
+<div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>
+<span class="ansi-red-fg">---------------------------------------------------------------------------</span>
+<span class="ansi-red-fg">KeyError</span>                                  Traceback (most recent call last)
+Cell <span class="ansi-green-fg">In[3], line 1</span>
+<span class="ansi-green-fg">----&gt; 1</span> dask_gateway_address <span style="color: rgb(98,98,98)">=</span> <span class="ansi-yellow-bg">os</span><span class="ansi-yellow-bg" style="color: rgb(98,98,98)">.</span><span class="ansi-yellow-bg">environ</span><span class="ansi-yellow-bg">[</span><span class="ansi-yellow-bg" style="color: rgb(175,0,0)">'</span><span class="ansi-yellow-bg" style="color: rgb(175,0,0)">DASK_GATEWAY__ADDRESS</span><span class="ansi-yellow-bg" style="color: rgb(175,0,0)">'</span><span class="ansi-yellow-bg">]</span>
+<span class="ansi-green-intense-fg ansi-bold">      2</span> api_token <span style="color: rgb(98,98,98)">=</span> os<span style="color: rgb(98,98,98)">.</span>environ[<span style="color: rgb(175,0,0)">'</span><span style="color: rgb(175,0,0)">JUPYTERHUB_API_TOKEN</span><span style="color: rgb(175,0,0)">'</span>]
+<span class="ansi-green-intense-fg ansi-bold">      4</span> auth <span style="color: rgb(98,98,98)">=</span> JupyterHubAuth(api_token<span style="color: rgb(98,98,98)">=</span>api_token)
+
+File <span class="ansi-green-fg">/usr/lib/python3.10/os.py:680</span>, in <span class="ansi-cyan-fg">_Environ.__getitem__</span><span class="ansi-blue-fg">(self, key)</span>
+<span class="ansi-green-intense-fg ansi-bold">    677</span>     value <span style="color: rgb(98,98,98)">=</span> <span style="color: rgb(0,135,0)">self</span><span style="color: rgb(98,98,98)">.</span>_data[<span style="color: rgb(0,135,0)">self</span><span style="color: rgb(98,98,98)">.</span>encodekey(key)]
+<span class="ansi-green-intense-fg ansi-bold">    678</span> <span class="ansi-bold" style="color: rgb(0,135,0)">except</span> <span class="ansi-bold" style="color: rgb(215,95,95)">KeyError</span>:
+<span class="ansi-green-intense-fg ansi-bold">    679</span>     <span style="color: rgb(95,135,135)"># raise KeyError with the original key value</span>
+<span class="ansi-green-fg">--&gt; 680</span>     <span class="ansi-bold" style="color: rgb(0,135,0)">raise</span> <span class="ansi-bold" style="color: rgb(215,95,95)">KeyError</span>(key) <span class="ansi-bold" style="color: rgb(0,135,0)">from</span> <span class="ansi-bold" style="color: rgb(0,135,0)">None</span>
+<span class="ansi-green-intense-fg ansi-bold">    681</span> <span class="ansi-bold" style="color: rgb(0,135,0)">return</span> <span style="color: rgb(0,135,0)">self</span><span style="color: rgb(98,98,98)">.</span>decodevalue(value)
+
+<span class="ansi-red-fg">KeyError</span>: 'DASK_GATEWAY__ADDRESS'</pre>
+</div>
+</div>
+</div>
+</div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=bec9a809-379a-4a21-b446-c45aacb78e61">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -7585,15 +7637,15 @@ a.anchor-link {
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
-<div class="highlight hl-ipython3"><pre><span></span><span class="n">gateway</span> <span class="o">=</span> <span class="n">Gateway</span><span class="p">()</span>
-<span class="c1"># options = gateway.cluster_options()</span>
-<span class="n">cluster</span> <span class="o">=</span> <span class="n">create_cluster</span><span class="p">(</span><span class="n">gateway</span><span class="p">)</span>
-<span class="n">client</span> <span class="o">=</span> <span class="n">cluster</span><span class="o">.</span><span class="n">get_client</span><span class="p">()</span>
+<div class="highlight hl-ipython3"><pre><span></span><span class="c1"># gateway = Gateway()</span>
+<span class="c1"># # options = gateway.cluster_options()</span>
+<span class="c1"># cluster = create_cluster(gateway)</span>
+<span class="c1"># client = cluster.get_client()</span>
 
-<span class="c1"># Show cluster and client objects and options</span>
-<span class="n">display</span><span class="p">(</span><span class="n">cluster</span><span class="p">)</span>
-<span class="n">display</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<span class="c1"># display(options)</span>
+<span class="c1"># # Show cluster and client objects and options</span>
+<span class="c1"># display(cluster)</span>
+<span class="c1"># display(client)</span>
+<span class="c1"># # display(options)</span>
 </pre></div>
 </div>
 </div>

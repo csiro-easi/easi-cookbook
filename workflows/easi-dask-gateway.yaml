@@ -289,15 +289,15 @@ spec:
             mountPath: '/root'
           - name: git-sync
             mountPath: "{{workflow.parameters.package-path}}"
-        env:
-          - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE
-            value: "{{workflow.parameters.dask_worker_image}}"
-          - name: DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION
-            value: "{{workflow.labels.team}}"
-          - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY
-            value: IfNotPresent
-          - name: DASK_GATEWAY__ADDRESS    # or TRAEFIK_DASK_GATEWAY_SERVICE_HOST?
-            value: "{{workflow.parameters.dask_gateway_address}}"
+        # env:
+        #   - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE
+        #     value: "{{workflow.parameters.dask_worker_image}}"
+        #   - name: DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION
+        #     value: "{{workflow.labels.team}}"
+        #   - name: DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY
+        #     value: IfNotPresent
+        #   - name: DASK_GATEWAY__ADDRESS    # or TRAEFIK_DASK_GATEWAY_SERVICE_HOST?
+        #     value: "{{workflow.parameters.dask_gateway_address}}"
           
         # API_DASK_GATEWAY_PORT=tcp://172.20.212.192:8000
         # API_DASK_GATEWAY_PORT_8000_TCP=tcp://172.20.212.192:8000
@@ -343,6 +343,9 @@ spec:
           repo = Path(package_path) / package_repo.split('/')[-1]
           # sys.path.insert(1, str(repo))
 
+          # Get api token from the mounted token
+          with open('/root/.jhub-api-token','r') as f:
+              api_token = f.read()
 
           # Obtain AWS credentials from the serviceAccount assigned to this pod
           # Refresh if necessary and obtain the frozen version for use in the Dask Workers
@@ -361,6 +364,7 @@ spec:
           env['DASK_GATEWAY__CLUSTER__OPTIONS__EASI_USER_ALLOCATION'] = "{{workflow.labels.team}}"
           env['DASK_GATEWAY__CLUSTER__OPTIONS__IMAGE_PULL_POLICY'] = 'IfNotPresent'
           env['DASK_GATEWAY__ADDRESS'] = "{{workflow.parameters.dask_gateway_address}}"
+          env['JUPYTERHUB_API_TOKEN'] = api_token
 
 
           notebook = 'argo-dask/simple-dask-gateway-example.ipynb'
@@ -374,6 +378,7 @@ spec:
               '/env/bin/jupyter', 'nbconvert',
               '--ExecutePreprocessor.timeout=72000',
               '--execute', '--to', 'notebook',
+              '--output-dir', '/tmp',
               f'{repo / notebook}'
           ]
           cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -384,6 +389,12 @@ spec:
           except subprocess.CalledProcessError:
               logging.error(cp.stdout.decode('utf-8'))
               raise
+
+          # TODO push the executed notebook to S3
+          # - Get some outputs from the executed notebook?
+          # - e.g., open as json and read the the cluster ID
+          # - remove the script.env section above if its not needed
+
           
 
 

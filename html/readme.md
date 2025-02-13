@@ -20,3 +20,4 @@ Here are the githack links to each of the HTML rendered notebooks.
 ### Cookbooks
 1. [Asynchronous S3 functions](https://raw.githack.com/csiro-easi/easi-cookbook/main/html/s3-aio/s3fs.html)
 1. [Async S3 copy and edit datasets](https://raw.githack.com/csiro-easi/easi-cookbook/main/html/s3-aio/copy-edit-datasets.html)
+1. [Kerchunk building data file indexes and using them](https://raw.githack.com/csiro-easi/easi-cookbook/main/html/kerchunk/Kerchunk_Demo.html)

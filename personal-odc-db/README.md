@@ -1,3 +1,4 @@
+
 # Running a personal ODC Database
 
 Normally, you don't have write access to the ODC Database, so you can't create new Products and Datasets.
@@ -32,6 +33,10 @@ Steps:
 2. Download and install PostgreSQL into ~/postgresql.
 
        micromamba create --prefix ~/postgresql --yes postgresql
+
+       (Optional) Include `postgis` with the installation:
+
+       micromamba create --prefix ~/postgresql --yes postgresql postgis
 
 3. Initialise a Postgres Data Dir, Launch Postgres locally, and create an empty datacube DB.
 

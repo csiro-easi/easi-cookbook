@@ -34,7 +34,7 @@ Steps:
 
        micromamba create --prefix ~/postgresql --yes postgresql
 
-       (Optional) Include `postgis` with the installation:
+    (Optional) Include `postgis` with the installation:
 
        micromamba create --prefix ~/postgresql --yes postgresql postgis
 

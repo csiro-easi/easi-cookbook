@@ -57,7 +57,9 @@ OPTIONAL (env vars):
   VENV_NAME       Name of the virtual environment  [default: myvenv]
   VENV_DISP       Jupyter kernel display name      [default: My Venv]
   CONSTRAINTS     Space-separated constraint files [default: /conf/constraints.txt]
+                  Contains "pkg>=version" lines to constrain package versions
   OVERRIDES       Space-separated pip overrides files [default: none]
+                  Contains "pkg>=version" lines to override constraints (see uv docs)
   INSTALL_KERNEL  Register as Jupyter kernel       [default: false]
   TORCH_BACKEND   PyTorch index for UV to use      [default: auto]
   VERBOSE         Echo install commands before running [default: false]
@@ -158,12 +160,17 @@ FROZEN=$(pip freeze 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '_' '-')
 DRY_RUN_CMD=(uv pip install --dry-run "${UV_OPTIONS[@]}")
 
 # Add system constraints and overrides if they exist
+# SYS_OVERRIDES contains "--override somefile.txt" lines, so we can xargs it into the command
 [ -f "$NOBINARY" ] && DRY_RUN_CMD+=(-c "$NOBINARY")
 [ -f "$SYS_OVERRIDES" ] && DRY_RUN_CMD+=($(xargs < "${SYS_OVERRIDES}"))
 
-# Add user constraints and overrides
-for cf in $CONSTRAINTS $OVERRIDES; do
+# Add user constraints
+for cf in $CONSTRAINTS; do
     [ -f "$cf" ] && DRY_RUN_CMD+=(-c "$cf")
+done
+# Add user overrides
+for cf in $OVERRIDES; do
+    [ -f "$cf" ] && DRY_RUN_CMD+=(--override "$cf")
 done
 
 # Add packages to install
@@ -172,6 +179,7 @@ done
 
 [ "$VERBOSE" = "true" ] && echo "+ ${DRY_RUN_CMD[*]}"
 
+# Parse result of dry run against frozen system packages to find new packages to install
 EXTRA=()
 while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
@@ -185,6 +193,7 @@ done < <(
     | awk '{print $2}'
 )
 
+# Install only the new packages, if any
 if [ ${#EXTRA[@]} -eq 0 ]; then
     echo "All dependencies already present; nothing to install."
 else

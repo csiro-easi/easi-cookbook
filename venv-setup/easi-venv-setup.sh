@@ -32,6 +32,7 @@ USAGE:
 REQUIRED (at least one):
   PACKAGES        Space-separated list of packages to install (pip specifiers)
   EDITABLE_PKG    Path to editable install (e.g. ".")
+                  For multiple editable packages, re-run the script with same VENV_NAME
 
 OPTIONAL (env vars):
   VENV_BASE       Base directory for venvs         [default: $HOME/venvs]
@@ -43,7 +44,7 @@ OPTIONAL (env vars):
                   Contains "pkg>=version" lines to override constraints (see uv docs)
   INSTALL_KERNEL  Register as Jupyter kernel       [default: false]
   TORCH_BACKEND   PyTorch index for UV to use      [default: cpu]
-  VERBOSE         Echo install commands before running [default: false]
+  DEBUG           Print debug information          [default: false]
 
 EXAMPLES:
   PACKAGES='torch torchvision' VENV_NAME=myenv INSTALL_KERNEL=true bash easi-venv-setup.sh
@@ -85,8 +86,8 @@ OVERRIDES="${OVERRIDES:-}"
 # Whether to register as a Jupyter kernel (disable on workers)
 INSTALL_KERNEL="${INSTALL_KERNEL:-false}"
 
-# Verbose/debug: echo uv install commands before running
-VERBOSE="${VERBOSE:-false}"
+# Debug: print full uv command output
+DEBUG="${DEBUG:-false}"
 
 # PyTorch index for UV to use (e.g. "cpu", "cu118", "auto")
 TORCH_BACKEND="${TORCH_BACKEND:-cpu}"
@@ -162,14 +163,14 @@ if [ $DRY_RUN_EXIT -ne 0 ]; then
     echo "$DRY_RUN_OUTPUT"
     exit 1
 fi
-[ "$VERBOSE" = "true" ] && echo "$DRY_RUN_OUTPUT"
+[ "$DEBUG" = "true" ] && echo "$DRY_RUN_OUTPUT"
 
 # Parse dry-run output against frozen system packages to find new packages to install.
 # - dry run outputs lines like "name==version"
 # - we normalize names (lowercase, underscore→dash) for comparison
 # - SKIP only if the exact name==version is already in the system
 # - if uv resolves a NEWER version than the system has, install it into the venv (shadows system)
-# - users control versions via CONSTRAINTS / OVERRIDES; /conf/pip-overrides.txt is always applied
+# - users control versions via CONSTRAINTS / OVERRIDES
 EXTRA=()
 echo "Comparing against system packages..."
 while IFS= read -r pkg; do
@@ -199,17 +200,16 @@ if [ ${#EXTRA[@]} -eq 0 ]; then
 else
     echo "Installing new packages..."
     INSTALL_CMD=(uv pip install --no-deps --python "$VENV_PYTHON" "${UV_OPTIONS[@]}" "${EXTRA[@]}")
-    # [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
     "${INSTALL_CMD[@]}"
 fi
 
 # =============================================================================
 # OPTIONAL: EDITABLE LOCAL PACKAGE
-# All dependencies and constraints should be handled in the above steps
+# All dependencies and constraints should be handled in the above steps.
+# For multiple editable packages, re-run the script with the same VENV_NAME.
 # =============================================================================
 if [ -n "$EDITABLE_PKG" ]; then
     INSTALL_CMD=(uv pip install --no-deps --python "$VENV_PYTHON" -e "$EDITABLE_PKG")
-    # [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
     "${INSTALL_CMD[@]}"
 fi
 

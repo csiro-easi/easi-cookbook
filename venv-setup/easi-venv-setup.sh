@@ -6,36 +6,17 @@
 #
 # ---------------------------------------------------------------------------
 # USAGE (interactive shell):
-#   PACKAGES='pkg1 pkg2' source easi-venv-setup.sh
+#   PACKAGES='pkg1 pkg2' bash easi-venv-setup.sh
+#   Then activate manually: source ~/venvs/myvenv/bin/activate
 #
-# USAGE (Dask worker via UploadFile plugin):
-#   from dask.distributed import Client, UploadFile
-#   client = Client(cluster)
-#   client.register_plugin(UploadFile("easi-venv-setup.sh"))
-#   def setup_worker():
-#       import subprocess
-#       subprocess.run(["bash", "-c", "PACKAGES='pkg1 pkg2' source /tmp/easi-venv-setup.sh"], check=True)
-#   client.run(setup_worker)
+# USAGE (from Python / Dask worker):
+#   import subprocess, os
+#   subprocess.run(["bash", "/path/to/easi-venv-setup.sh"],
+#                  env={**os.environ, "PACKAGES": "pkg1 pkg2", "VENV_NAME": "myenv"},
+#                  check=True)
 # ---------------------------------------------------------------------------
 
 # set -euo pipefail
-
-# =============================================================================
-# DETECT IF SOURCED OR EXECUTED
-# =============================================================================
-_sourced=false
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-    _sourced=true
-fi
-
-if [ "$_sourced" = false ]; then
-    echo "easi-venv-setup.sh: This script should be sourced, not executed directly."
-    echo ""
-    echo "  Usage: PACKAGES='pkg1 pkg2' source easi-venv-setup.sh"
-    echo "  Help:  source easi-venv-setup.sh --help"
-    # exit is safe here: we are being executed, not sourced
-    exit 1
-fi
 
 # =============================================================================
 # HELP
@@ -45,8 +26,8 @@ show_help() {
 easi-venv-setup.sh — Create a lightweight virtual environment on EASI images using uv.
 
 USAGE:
-  PACKAGES='pkg1 pkg2' source easi-venv-setup.sh
-  PACKAGES='pkg1 pkg2' VENV_NAME=myenv source easi-venv-setup.sh
+  PACKAGES='pkg1 pkg2' bash easi-venv-setup.sh
+  PACKAGES='pkg1 pkg2' VENV_NAME=myenv bash easi-venv-setup.sh
 
 REQUIRED (at least one):
   PACKAGES        Space-separated list of packages to install (pip specifiers)
@@ -61,28 +42,28 @@ OPTIONAL (env vars):
   OVERRIDES       Space-separated pip overrides files [default: none]
                   Contains "pkg>=version" lines to override constraints (see uv docs)
   INSTALL_KERNEL  Register as Jupyter kernel       [default: false]
-  TORCH_BACKEND   PyTorch index for UV to use      [default: auto]
+  TORCH_BACKEND   PyTorch index for UV to use      [default: cpu]
   VERBOSE         Echo install commands before running [default: false]
 
 EXAMPLES:
-  PACKAGES='torch torchvision' VENV_NAME=myenv INSTALL_KERNEL=true source easi-venv-setup.sh
-  EDITABLE_PKG='.' VENV_NAME=myenv source easi-venv-setup.sh
-  source easi-venv-setup.sh --help
+  PACKAGES='torch torchvision' VENV_NAME=myenv INSTALL_KERNEL=true bash easi-venv-setup.sh
+  EDITABLE_PKG='.' VENV_NAME=myenv bash easi-venv-setup.sh
+  bash easi-venv-setup.sh --help
 EOF
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     show_help
-    return 0
+    exit 0
 fi
 
 if [ -z "${PACKAGES:-}" ] && [ -z "${EDITABLE_PKG:-}" ]; then
     echo "easi-venv-setup.sh: At least one of PACKAGES or EDITABLE_PKG must be set."
     echo ""
-    echo "  Usage: PACKAGES='pkg1 pkg2' source easi-venv-setup.sh"
-    echo "         EDITABLE_PKG='.' source easi-venv-setup.sh"
+    echo "  Usage: PACKAGES='pkg1 pkg2' bash easi-venv-setup.sh"
+    echo "         EDITABLE_PKG='.' bash easi-venv-setup.sh"
     echo "  Run with --help for full options."
-    return 1
+    exit 1
 fi
 
 # =============================================================================
@@ -108,10 +89,10 @@ INSTALL_KERNEL="${INSTALL_KERNEL:-false}"
 VERBOSE="${VERBOSE:-false}"
 
 # PyTorch index for UV to use (e.g. "cpu", "cu118", "auto")
-TORCH_BACKEND="${TORCH_BACKEND:-auto}"
+TORCH_BACKEND="${TORCH_BACKEND:-cpu}"
 
 # System overrides file, if it exists in the given image
-SYS_OVERRIDES="/opt/pip-overrides.txt"
+SYS_OVERRIDES="/conf/pip-overrides.txt"
 
 # System no-binary file, if it exists in the given image
 NOBINARY="/conf/no-binary.txt"
@@ -120,25 +101,17 @@ NOBINARY="/conf/no-binary.txt"
 # DERIVED VALUES
 # =============================================================================
 PYVERSION=$(python3 --version | awk '{print tolower($1$2)}' | sed 's/\.[0-9]*$//')
+VENV_PYTHON="$VENV_BASE/$VENV_NAME/bin/python"
 
 # System uv options
 UV_OPTIONS=(--system-certs --no-build-isolation)
-UV_OPTIONS+=(--torch-backend "$TORCH_BACKEND")
-
-# =============================================================================
-# WARN IF ALREADY INSIDE A DIFFERENT VENV
-# =============================================================================
-if [ -n "${VIRTUAL_ENV:-}" ]; then
-    _target_venv="$(realpath "$VENV_BASE/$VENV_NAME" 2>/dev/null || echo "$VENV_BASE/$VENV_NAME")"
-    _active_venv="$(realpath "$VIRTUAL_ENV" 2>/dev/null || echo "$VIRTUAL_ENV")"
-    if [ "$_active_venv" != "$_target_venv" ]; then
-        echo "Warning: already inside a virtual environment: $VIRTUAL_ENV"
-        echo "         Switching to \"$VENV_NAME\"..."
-    fi
-fi
+UV_OPTIONS+=(--torch-backend="$TORCH_BACKEND")
+UV_OPTIONS+=(--color=never)  # disable color in output for easier parsing
 
 # =============================================================================
 # CREATE VENV
+# The --system-site-packages flag will provide the venv with access to the system site packages directory at runtime.
+# uv will not take system site packages into account when running commands like uv pip list or uv pip install.
 # =============================================================================
 if [ ! -d "$VENV_BASE/$VENV_NAME" ]; then
     echo "Creating virtual environment \"$VENV_NAME\""
@@ -148,16 +121,16 @@ else
     echo "Virtual environment \"$VENV_NAME\" already exists"
 fi
 
-source "$VENV_BASE/$VENV_NAME/bin/activate"
-
 # =============================================================================
 # RESOLVE & INSTALL ONLY NEW PACKAGES
 # =============================================================================
 echo "Resolving dependencies..."
-FROZEN=$(pip freeze 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+
+# List of currently installed packages in system site-packages (lowercased, with underscores replaced by dashes for comparison)
+FROZEN=$(uv pip freeze --python /env --color=never 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '_' '-')
 
 # Build dry-run command
-DRY_RUN_CMD=(uv pip install --dry-run "${UV_OPTIONS[@]}")
+DRY_RUN_CMD=(uv pip install --dry-run --python "$VENV_PYTHON" "${UV_OPTIONS[@]}")
 
 # Add system constraints and overrides if they exist
 # SYS_OVERRIDES contains "--override somefile.txt" lines, so we can xargs it into the command
@@ -177,18 +150,45 @@ done
 [ -n "$PACKAGES" ] && DRY_RUN_CMD+=($PACKAGES)
 [ -n "$EDITABLE_PKG" ] && DRY_RUN_CMD+=("$EDITABLE_PKG")
 
-[ "$VERBOSE" = "true" ] && echo "+ ${DRY_RUN_CMD[*]}"
+echo "+ ${DRY_RUN_CMD[*]}"
 
-# Parse result of dry run against frozen system packages to find new packages to install
+# Capture dry-run output (uv writes the package list to stderr; 2>&1 merges it).
+# Capturing to a variable lets us check the exit code - a non-zero exit inside a
+# process substitution is silently ignored in bash without set -e.
+DRY_RUN_OUTPUT=$("${DRY_RUN_CMD[@]}" 2>&1)
+DRY_RUN_EXIT=$?
+if [ $DRY_RUN_EXIT -ne 0 ]; then
+    echo "ERROR: dependency resolution failed (exit $DRY_RUN_EXIT):"
+    echo "$DRY_RUN_OUTPUT"
+    exit 1
+fi
+[ "$VERBOSE" = "true" ] && echo "$DRY_RUN_OUTPUT"
+
+# Parse dry-run output against frozen system packages to find new packages to install.
+# - dry run outputs lines like "name==version"
+# - we normalize names (lowercase, underscore→dash) for comparison
+# - SKIP only if the exact name==version is already in the system
+# - if uv resolves a NEWER version than the system has, install it into the venv (shadows system)
+# - users control versions via CONSTRAINTS / OVERRIDES; /conf/pip-overrides.txt is always applied
 EXTRA=()
+echo "Comparing against system packages..."
 while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
-    pkgname=$(echo "$pkg" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | cut -d'=' -f1)
-    if ! echo "$FROZEN" | grep -q "^${pkgname}=="; then
+    pkgnorm=$(echo "$pkg" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+    pkgname=$(echo "$pkgnorm" | cut -d'=' -f1)
+    sys_entry=$(echo "$FROZEN" | grep "^${pkgname}==")
+
+    if echo "$FROZEN" | grep -q "^${pkgnorm}$"; then
+        echo "  skip    $pkg (exact version already in system)"
+    elif [ -n "$sys_entry" ]; then
+        echo "  upgrade $pkg (system has $sys_entry)"
+        EXTRA+=("$pkg")
+    else
+        echo "  new     $pkg"
         EXTRA+=("$pkg")
     fi
 done < <(
-    "${DRY_RUN_CMD[@]}" 2>&1 \
+    echo "$DRY_RUN_OUTPUT" \
     | grep -E '^\s+\+\s+[a-zA-Z0-9_-]+==' \
     | awk '{print $2}'
 )
@@ -197,10 +197,9 @@ done < <(
 if [ ${#EXTRA[@]} -eq 0 ]; then
     echo "All dependencies already present; nothing to install."
 else
-    echo "Installing ${#EXTRA[@]} new packages into \"$VENV_NAME\":"
-    printf '  %s\n' "${EXTRA[@]}"
-    INSTALL_CMD=(uv pip install --no-deps "${UV_OPTIONS[@]}" "${EXTRA[@]}")
-    [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
+    echo "Installing new packages..."
+    INSTALL_CMD=(uv pip install --no-deps --python "$VENV_PYTHON" "${UV_OPTIONS[@]}" "${EXTRA[@]}")
+    # [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
     "${INSTALL_CMD[@]}"
 fi
 
@@ -209,8 +208,8 @@ fi
 # All dependencies and constraints should be handled in the above steps
 # =============================================================================
 if [ -n "$EDITABLE_PKG" ]; then
-    INSTALL_CMD=(uv pip install --no-deps -e "$EDITABLE_PKG")
-    [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
+    INSTALL_CMD=(uv pip install --no-deps --python "$VENV_PYTHON" -e "$EDITABLE_PKG")
+    # [ "$VERBOSE" = "true" ] && echo "+ ${INSTALL_CMD[*]}"
     "${INSTALL_CMD[@]}"
 fi
 
@@ -221,7 +220,11 @@ if [ "$INSTALL_KERNEL" = "true" ]; then
     if jupyter kernelspec list 2>/dev/null | grep -q " $VENV_NAME "; then
         echo "Kernel \"$VENV_NAME\" already registered"
     else
-        python -m ipykernel install --user --name="$VENV_NAME" --display-name "$VENV_DISP"
+        "$VENV_PYTHON" -m ipykernel install --user --name="$VENV_NAME" --display-name "$VENV_DISP"
         echo "Installed kernel \"$VENV_NAME\""
     fi
 fi
+
+echo ""
+echo "Done. To activate this environment in your shell:"
+echo "  source \"$VENV_BASE/$VENV_NAME/bin/activate\""
